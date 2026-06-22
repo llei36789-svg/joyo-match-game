@@ -23,7 +23,7 @@ export const GameConfig = {
     adUnitId: "adunit-extra-time-placeholder",
   },
   bonusAd: {
-    minScore: 180,
+    minItemScore: 50,
     cooldownSec: 18,
     adUnitId: "adunit-score-bonus-placeholder",
   },

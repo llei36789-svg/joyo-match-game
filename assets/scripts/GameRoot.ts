@@ -27,6 +27,7 @@ import { PoolUtil } from "./util/PoolUtil";
 import { UIBonusPanel } from "./ui/UIBonusPanel";
 import { UIGamePanel } from "./ui/UIGamePanel";
 import { UIResultPanel } from "./ui/UIResultPanel";
+import { UITaskPanel } from "./ui/UITaskPanel";
 
 const { ccclass } = _decorator;
 
@@ -49,6 +50,8 @@ interface LayoutMetrics {
   contentWidth: number;
   headerSize: Size;
   headerY: number;
+  taskSize: Size;
+  taskY: number;
   topHudSize: Size;
   topHudY: number;
   boardFrameSize: number;
@@ -62,6 +65,7 @@ export class GameRoot extends Component {
   private gridManager: GridManager | null = null;
   private boardNode: Node | null = null;
   private gamePanel: UIGamePanel | null = null;
+  private taskPanel: UITaskPanel | null = null;
   private bonusPanel: UIBonusPanel | null = null;
   private resultPanel: UIResultPanel | null = null;
   private layout: LayoutMetrics | null = null;
@@ -89,6 +93,7 @@ export class GameRoot extends Component {
     const headerNode = this.createNode("Header", this.node, new Vec3(0, layout.headerY, 0), layout.headerSize);
     this.createHeader(headerNode);
 
+    const taskNode = this.createNode("TaskHud", this.node, new Vec3(0, layout.taskY, 0), layout.taskSize);
     const topHudNode = this.createNode("TopHud", this.node, new Vec3(0, layout.topHudY, 0), layout.topHudSize);
 
     this.createGlow(this.node, new Vec3(0, layout.boardY, 0), layout.boardFrameSize * 0.48, new Color(113, 152, 255, 26));
@@ -116,6 +121,9 @@ export class GameRoot extends Component {
     this.gamePanel = topHudNode.addComponent(UIGamePanel);
     this.gamePanel.buildLayout(topHudNode, this.createPanel.bind(this), this.createLabel.bind(this), this.createIconBadge.bind(this));
 
+    this.taskPanel = taskNode.addComponent(UITaskPanel);
+    this.taskPanel.buildLayout(taskNode, this.createPanel.bind(this), this.createLabel.bind(this));
+
     this.resultPanel = this.node.addComponent(UIResultPanel);
     this.resultPanel.buildLayout(this.createPanel.bind(this), this.createLabel.bind(this), this.createButton.bind(this));
     this.resultPanel.setActions(
@@ -130,7 +138,7 @@ export class GameRoot extends Component {
   }
 
   private bootstrapGame(): void {
-    if (!this.boardNode || !this.gamePanel || !this.bonusPanel || !this.resultPanel) {
+    if (!this.boardNode || !this.gamePanel || !this.taskPanel || !this.bonusPanel || !this.resultPanel) {
       return;
     }
 
@@ -149,6 +157,7 @@ export class GameRoot extends Component {
       gridManager: this.gridManager,
       itemManager,
       uiPanel: this.gamePanel,
+      taskPanel: this.taskPanel,
       bonusPanel: this.bonusPanel,
       resultPanel: this.resultPanel,
       statusCallback: (_message) => undefined,
@@ -389,10 +398,11 @@ export class GameRoot extends Component {
     desc.string = [
       "3 分钟内尽量获得更高总分。",
       "点击任意两个方块即可交换，形成 3 个及以上相同图标会消除。",
+      "本局得分下方会显示当前任务，完成后自动领取奖励并刷新新任务。",
       "低分图标更常出现，高分图标更稀有。",
-      "4 连、5 连、连锁和特殊方块会带来额外加分。",
+      "当前任务只需要消除普通图标，新手也能快速理解。",
       "倒计时结束时可看广告增加 30 秒挑战时间。",
-      "打出高分消除时会弹出幸运翻倍，弹窗和广告期间挑战计时会暂停。",
+      "消除单个价值 50 分及以上的图标时会弹出幸运翻倍。",
     ].join("\n");
 
     const scoreTitle = this.createLabel(
@@ -712,13 +722,17 @@ export class GameRoot extends Component {
     const bottomInset = Math.max(8, Math.round(stageHeight * 0.01));
     const sectionGap = Math.max(8, Math.round(stageHeight * 0.01));
     const headerHeight = Math.min(Math.max(stageHeight * 0.15, 188), 210);
+    const taskHeight = Math.min(108, Math.max(96, stageHeight * 0.076));
     const topHudHeight = Math.min(146, Math.max(124, stageHeight * 0.105));
     const topY = stageHeight / 2;
     const bottomY = -stageHeight / 2;
     const headerY = topY - topInset - headerHeight / 2 - Math.max(18, stageHeight * 0.025);
     const headerBottom = headerY - headerHeight / 2;
     const topHudY = headerBottom - sectionGap - topHudHeight / 2;
-    const boardAreaTop = topHudY - topHudHeight / 2 - sectionGap;
+    const topHudBottom = topHudY - topHudHeight / 2;
+    const taskY = topHudBottom - sectionGap - taskHeight / 2;
+    const taskBottom = taskY - taskHeight / 2;
+    const boardAreaTop = taskBottom - sectionGap;
     const boardAreaBottom = bottomY + bottomInset;
     const boardFrameSize = Math.min(contentWidth, boardAreaTop - boardAreaBottom);
     const boardScale = Math.max(1, Math.min((boardFrameSize - 12) / GameConfig.board.pixelSize, 1.5));
@@ -730,6 +744,8 @@ export class GameRoot extends Component {
       contentWidth,
       headerSize: new Size(contentWidth, headerHeight),
       headerY,
+      taskSize: new Size(contentWidth, taskHeight),
+      taskY,
       topHudSize: new Size(contentWidth, topHudHeight),
       topHudY,
       boardFrameSize,

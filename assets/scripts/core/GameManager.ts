@@ -3,11 +3,12 @@ import { DropManager } from "./DropManager";
 import { GridManager } from "./GridManager";
 import { ItemManager } from "./ItemManager";
 import { MatchCheck } from "./MatchCheck";
-import { BlockState, GameState, ITEM_SCORE_MAP, LEVELS, LevelConfig, Position, SpecialType } from "../data/LevelData";
+import { BlockState, GameState, ITEM_SCORE_MAP, ITEM_TYPES, ItemType, LEVELS, LevelConfig, Position, SpecialType } from "../data/LevelData";
 import { TweenUtil } from "../util/TweenUtil";
 import { UIBonusPanel } from "../ui/UIBonusPanel";
 import { UIGamePanel } from "../ui/UIGamePanel";
 import { UIResultPanel } from "../ui/UIResultPanel";
+import { UITaskPanel } from "../ui/UITaskPanel";
 
 interface RewardedVideoAdCloseResult {
   isEnded?: boolean;
@@ -30,10 +31,51 @@ interface GameManagerOptions {
   gridManager: GridManager;
   itemManager: ItemManager;
   uiPanel: UIGamePanel;
+  taskPanel: UITaskPanel;
   bonusPanel: UIBonusPanel;
   resultPanel: UIResultPanel;
   statusCallback: (message: string) => void;
 }
+
+type TaskKind = "clearAny" | "clearItem";
+
+interface ActiveTask {
+  kind: TaskKind;
+  title: string;
+  target: number;
+  progress: number;
+  reward: number;
+  itemType?: ItemType;
+}
+
+interface RemovalResult {
+  score: number;
+  total: number;
+  itemCounts: Partial<Record<ItemType, number>>;
+}
+
+const ITEM_NAME_MAP: Record<ItemType, string> = {
+  [ItemType.Red]: "方块",
+  [ItemType.Yellow]: "圆圈",
+  [ItemType.Blue]: "三角形",
+  [ItemType.Green]: "菱形",
+  [ItemType.Purple]: "星星",
+  [ItemType.Orange]: "六边形",
+  [ItemType.Pink]: "五边形",
+  [ItemType.Cyan]: "爱心",
+  [ItemType.Lime]: "太阳",
+  [ItemType.Teal]: "加号",
+  [ItemType.Indigo]: "靛蓝",
+  [ItemType.Magenta]: "洋红",
+  [ItemType.Gold]: "金色",
+  [ItemType.Coral]: "珊瑚",
+  [ItemType.Mint]: "薄荷",
+  [ItemType.Azure]: "天蓝",
+  [ItemType.Rose]: "玫瑰",
+  [ItemType.Amber]: "琥珀",
+  [ItemType.Violet]: "紫罗兰",
+  [ItemType.Pearl]: "珍珠",
+};
 
 export class GameManager {
   private readonly dropManager = new DropManager();
@@ -41,6 +83,7 @@ export class GameManager {
   private readonly gridManager: GridManager;
   private readonly itemManager: ItemManager;
   private readonly uiPanel: UIGamePanel;
+  private readonly taskPanel: UITaskPanel;
   private readonly bonusPanel: UIBonusPanel;
   private readonly resultPanel: UIResultPanel;
   private readonly statusCallback: (message: string) => void;
@@ -57,11 +100,13 @@ export class GameManager {
   private isWatchingBonusAd = false;
   private pendingBonusScore = 0;
   private lastBonusOfferAtMs = 0;
+  private activeTask: ActiveTask | null = null;
 
   constructor(options: GameManagerOptions) {
     this.gridManager = options.gridManager;
     this.itemManager = options.itemManager;
     this.uiPanel = options.uiPanel;
+    this.taskPanel = options.taskPanel;
     this.bonusPanel = options.bonusPanel;
     this.resultPanel = options.resultPanel;
     this.statusCallback = options.statusCallback;
@@ -83,11 +128,13 @@ export class GameManager {
     this.isWatchingBonusAd = false;
     this.pendingBonusScore = 0;
     this.lastBonusOfferAtMs = 0;
+    this.activeTask = this.createNextTask();
     this.clearBonusScoreOffer();
     this.state = GameState.WAIT_INPUT;
     this.resultPanel.hide();
     this.gridManager.initializeGrid();
     this.uiPanel.renderLevelInfo(level);
+    this.refreshTaskUi();
     this.refreshUi("点击任意两个方块进行交换");
     this.startCountdownTimer();
   }
@@ -262,10 +309,11 @@ export class GameManager {
 
       const removalPositions = Array.from(removalKeys).map((key) => this.keyToPosition(key));
       const triggeredSpecialType = this.getRemovalSpecialType(removalPositions);
-      const removedScore = await this.removeCells(removalPositions);
-      const addScore = this.applyScore(removedScore, removalPositions.length, triggeredSpecialType, this.chainStep);
+      const removalResult = await this.removeCells(removalPositions);
+      const addScore = this.applyScore(removalResult.score, removalResult.total, triggeredSpecialType, this.chainStep);
       this.gridManager.showFloatingScore(removalPositions, addScore);
-      this.maybeShowBonusScoreOffer(addScore, this.chainStep, triggeredSpecialType);
+      this.updateTaskProgress(removalResult);
+      this.maybeShowBonusScoreOffer(addScore, removalResult);
 
       if (pendingSpecial) {
         const cell = this.gridManager.getCell(pendingSpecial.position.row, pendingSpecial.position.col);
@@ -285,9 +333,11 @@ export class GameManager {
     }
   }
 
-  private async removeCells(positions: Position[]): Promise<number> {
+  private async removeCells(positions: Position[]): Promise<RemovalResult> {
     const tasks: Promise<void>[] = [];
     let removedScore = 0;
+    let total = 0;
+    const itemCounts: Partial<Record<ItemType, number>> = {};
 
     positions.forEach((position) => {
       const cell = this.gridManager.getCell(position.row, position.col);
@@ -297,6 +347,8 @@ export class GameManager {
       }
 
       removedScore += ITEM_SCORE_MAP[cell.itemType];
+      total += 1;
+      itemCounts[cell.itemType] = (itemCounts[cell.itemType] ?? 0) + 1;
       tasks.push(
         TweenUtil.fadeAndScaleOut(node, GameConfig.board.clearDuration).then(() => {
           this.itemManager.recycleItemNode(node);
@@ -306,7 +358,11 @@ export class GameManager {
     });
 
     await Promise.all(tasks);
-    return removedScore;
+    return {
+      score: removedScore,
+      total,
+      itemCounts,
+    };
   }
 
   private applyScore(baseScore: number, matchCount: number, specialType: SpecialType, chainStep: number): number {
@@ -325,6 +381,81 @@ export class GameManager {
     this.score += addScore;
     this.refreshUi(chainStep > 1 ? `连锁 x${chainStep} +${addScore}` : `消除 +${addScore}`);
     return addScore;
+  }
+
+  private updateTaskProgress(removalResult: RemovalResult): void {
+    if (!this.activeTask) {
+      return;
+    }
+
+    const task = this.activeTask;
+    switch (task.kind) {
+      case "clearAny":
+        task.progress += removalResult.total;
+        break;
+      case "clearItem":
+        if (task.itemType) {
+          task.progress += removalResult.itemCounts[task.itemType] ?? 0;
+        }
+        break;
+    }
+
+    if (task.progress >= task.target) {
+      this.completeTask(task);
+      return;
+    }
+
+    this.refreshTaskUi();
+  }
+
+  private completeTask(task: ActiveTask): void {
+    this.score += task.reward;
+    this.gridManager.showFloatingScore(
+      [{ row: Math.floor(GameConfig.board.rows / 2), col: Math.floor(GameConfig.board.cols / 2) }],
+      task.reward,
+    );
+    this.activeTask = this.createNextTask();
+    this.refreshTaskUi();
+    this.refreshUi(`任务完成 +${task.reward}`);
+  }
+
+  private refreshTaskUi(): void {
+    if (!this.activeTask) {
+      return;
+    }
+
+    this.taskPanel.updateTask({
+      title: this.activeTask.title,
+      progress: this.activeTask.progress,
+      target: this.activeTask.target,
+      reward: this.activeTask.reward,
+    });
+  }
+
+  private createNextTask(): ActiveTask {
+    const taskType = Math.floor(Math.random() * 2);
+    if (taskType === 0) {
+      const target = this.randomInt(18, 30);
+      return {
+        kind: "clearAny",
+        title: `消除普通图标 ${target} 个`,
+        target,
+        progress: 0,
+        reward: 240 + target * 8,
+      };
+    }
+
+    const itemType = ITEM_TYPES[this.randomInt(0, ITEM_TYPES.length - 1)];
+    const itemScore = ITEM_SCORE_MAP[itemType];
+    const target = Math.max(5, 12 - Math.floor(itemScore / 15));
+    return {
+      kind: "clearItem",
+      title: `消除 ${ITEM_NAME_MAP[itemType]} ${target} 个`,
+      target,
+      progress: 0,
+      reward: 220 + itemScore * target,
+      itemType,
+    };
   }
 
   private getRemovalSpecialType(positions: Position[]): SpecialType {
@@ -404,17 +535,17 @@ export class GameManager {
     });
   }
 
-  private maybeShowBonusScoreOffer(addScore: number, chainStep: number, specialType: SpecialType): void {
+  private maybeShowBonusScoreOffer(addScore: number, removalResult: RemovalResult): void {
     if (this.state === GameState.LEVEL_END || this.isWatchingBonusAd) {
       return;
     }
 
     const now = Date.now();
-    const isGoodMoment =
-      addScore >= GameConfig.bonusAd.minScore ||
-      chainStep >= 2 ||
-      specialType !== SpecialType.None;
-    if (!isGoodMoment || now - this.lastBonusOfferAtMs < GameConfig.bonusAd.cooldownSec * 1000) {
+    const hasHighValueItem = ITEM_TYPES.some((itemType) => {
+      return (removalResult.itemCounts[itemType] ?? 0) > 0 &&
+        ITEM_SCORE_MAP[itemType] >= GameConfig.bonusAd.minItemScore;
+    });
+    if (!hasHighValueItem || now - this.lastBonusOfferAtMs < GameConfig.bonusAd.cooldownSec * 1000) {
       return;
     }
 
@@ -514,6 +645,10 @@ export class GameManager {
 
   private clearHintVisuals(): void {
     this.gridManager.clearHintSwap();
+  }
+
+  private randomInt(min: number, max: number): number {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
   }
 
   private keyToPosition(key: string): Position {
