@@ -215,7 +215,9 @@ export class GameManager {
     }
 
     this.score += bonusScore;
-    this.gridManager.showFloatingScore([{ row: Math.floor(GameConfig.board.rows / 2), col: Math.floor(GameConfig.board.cols / 2) }], bonusScore);
+    const bonusPosition = { row: Math.floor(GameConfig.board.rows / 2), col: Math.floor(GameConfig.board.cols / 2) };
+    this.gridManager.showFloatingScore([bonusPosition], bonusScore);
+    this.uiPanel.playScoreFlyFromWorld(this.gridManager.getPositionsWorldCenter([bonusPosition]), bonusScore);
     this.clearBonusScoreOffer();
     this.refreshUi(`幸运翻倍 +${bonusScore}`);
     this.resumeCountdownTimer();
@@ -281,7 +283,8 @@ export class GameManager {
 
     this.chainStep = 0;
     if (matchedPositions.length === 0) {
-      this.refreshUi("已交换位置，本步未形成消除");
+      this.timeLeftSec = Math.max(0, this.timeLeftSec - GameConfig.penalty.noMatchSwapTimeSec);
+      this.refreshUi(`未形成消除，时间 -${GameConfig.penalty.noMatchSwapTimeSec} 秒`);
       this.finishTurn();
       return;
     }
@@ -312,6 +315,7 @@ export class GameManager {
       const removalResult = await this.removeCells(removalPositions);
       const addScore = this.applyScore(removalResult.score, removalResult.total, triggeredSpecialType, this.chainStep);
       this.gridManager.showFloatingScore(removalPositions, addScore);
+      this.uiPanel.playScoreFlyFromWorld(this.gridManager.getPositionsWorldCenter(removalPositions), addScore);
       this.updateTaskProgress(removalResult);
       this.maybeShowBonusScoreOffer(addScore, removalResult);
 
@@ -379,7 +383,9 @@ export class GameManager {
     addScore += (chainStep - 1) * GameConfig.score.chainBonus;
 
     this.score += addScore;
-    this.refreshUi(chainStep > 1 ? `连锁 x${chainStep} +${addScore}` : `消除 +${addScore}`);
+    this.timeLeftSec += GameConfig.reward.matchTimeSec;
+    const timeText = `时间 +${GameConfig.reward.matchTimeSec} 秒`;
+    this.refreshUi(chainStep > 1 ? `连锁 x${chainStep} +${addScore}，${timeText}` : `消除 +${addScore}，${timeText}`);
     return addScore;
   }
 
@@ -410,10 +416,9 @@ export class GameManager {
 
   private completeTask(task: ActiveTask): void {
     this.score += task.reward;
-    this.gridManager.showFloatingScore(
-      [{ row: Math.floor(GameConfig.board.rows / 2), col: Math.floor(GameConfig.board.cols / 2) }],
-      task.reward,
-    );
+    const rewardPosition = { row: Math.floor(GameConfig.board.rows / 2), col: Math.floor(GameConfig.board.cols / 2) };
+    this.gridManager.showFloatingScore([rewardPosition], task.reward);
+    this.uiPanel.playScoreFlyFromWorld(this.gridManager.getPositionsWorldCenter([rewardPosition]), task.reward);
     this.activeTask = this.createNextTask();
     this.refreshTaskUi();
     this.refreshUi(`任务完成 +${task.reward}`);

@@ -120,6 +120,15 @@ export class GridManager {
       .start();
   }
 
+  getPositionsWorldCenter(positions: Position[]): Vec3 {
+    const center = this.getPositionsLocalCenter(positions);
+    const transform = this.options.boardNode.getComponent(UITransform);
+    if (!transform) {
+      return center;
+    }
+    return transform.convertToWorldSpaceAR(center);
+  }
+
   getBoardNode(): Node {
     return this.options.boardNode;
   }
@@ -215,6 +224,25 @@ export class GridManager {
     const x = -offset + col * this.options.tileSize;
     const y = offset - row * this.options.tileSize;
     return new Vec3(x, y, 0);
+  }
+
+  private getPositionsLocalCenter(positions: Position[]): Vec3 {
+    if (positions.length === 0) {
+      return Vec3.ZERO.clone();
+    }
+
+    const center = positions.reduce(
+      (sum, position) => {
+        const cellPosition = this.cellToPosition(position.row, position.col);
+        sum.x += cellPosition.x;
+        sum.y += cellPosition.y;
+        return sum;
+      },
+      new Vec3(0, 0, 0),
+    );
+    center.x /= positions.length;
+    center.y /= positions.length;
+    return center;
   }
 
   highlightCell(position: Position | null): void {

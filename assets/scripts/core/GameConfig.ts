@@ -18,6 +18,12 @@ export const GameConfig = {
     chainBonus: 30,
     specialMultiplier: 1.4,
   },
+  penalty: {
+    noMatchSwapTimeSec: 2,
+  },
+  reward: {
+    matchTimeSec: 1,
+  },
   powerup: {
     extraTimeSec: 30,
     adUnitId: "adunit-extra-time-placeholder",
