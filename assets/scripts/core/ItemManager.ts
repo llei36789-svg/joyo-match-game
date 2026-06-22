@@ -22,6 +22,8 @@ type ItemShape =
   | "arrow"
   | "clover"
   | "crescent"
+  | "cloud"
+  | "leaf"
   | "gem";
 
 interface ShapePoint {
@@ -30,25 +32,25 @@ interface ShapePoint {
 }
 
 const ITEM_SHAPE_MAP: Record<ItemType, ItemShape> = {
-  [ItemType.Red]: "star",
-  [ItemType.Yellow]: "triangle",
-  [ItemType.Blue]: "circle",
+  [ItemType.Red]: "square",
+  [ItemType.Yellow]: "circle",
+  [ItemType.Blue]: "triangle",
   [ItemType.Green]: "diamond",
-  [ItemType.Purple]: "hexagon",
-  [ItemType.Orange]: "pentagon",
-  [ItemType.Pink]: "heart",
-  [ItemType.Cyan]: "sun",
-  [ItemType.Lime]: "plus",
-  [ItemType.Teal]: "clover",
+  [ItemType.Purple]: "star",
+  [ItemType.Orange]: "hexagon",
+  [ItemType.Pink]: "pentagon",
+  [ItemType.Cyan]: "heart",
+  [ItemType.Lime]: "sun",
+  [ItemType.Teal]: "plus",
   [ItemType.Indigo]: "shield",
-  [ItemType.Magenta]: "flower",
-  [ItemType.Gold]: "crown",
-  [ItemType.Coral]: "teardrop",
-  [ItemType.Mint]: "oval",
-  [ItemType.Azure]: "arrow",
-  [ItemType.Rose]: "crescent",
-  [ItemType.Amber]: "octagon",
-  [ItemType.Violet]: "square",
+  [ItemType.Magenta]: "leaf",
+  [ItemType.Gold]: "flower",
+  [ItemType.Coral]: "crown",
+  [ItemType.Mint]: "teardrop",
+  [ItemType.Azure]: "oval",
+  [ItemType.Rose]: "arrow",
+  [ItemType.Amber]: "cloud",
+  [ItemType.Violet]: "octagon",
   [ItemType.Pearl]: "gem",
 };
 
@@ -287,6 +289,7 @@ export class ItemManager {
 
     this.drawItem(graphics, itemType, specialType, size - 8);
     this.updateBrandMark(brandLabel, itemType, size - 8);
+    this.hideScoreMark(node);
     this.updateSpecialFx(fxNode, specialType, size - 8);
     brandLabelNode.setSiblingIndex(Math.max(0, node.children.length - 3));
     fxNode.setSiblingIndex(Math.max(0, node.children.length - 2));
@@ -305,6 +308,7 @@ export class ItemManager {
     if (brandLabel) {
       this.updateBrandMark(brandLabel, itemType, size - 8);
     }
+    this.hideScoreMark(node);
     this.updateSpecialFx(fxNode, specialType, size - 8);
     node.getChildByName("BrandMark")?.setSiblingIndex(Math.max(0, node.children.length - 3));
     fxNode.setSiblingIndex(Math.max(0, node.children.length - 2));
@@ -364,6 +368,18 @@ export class ItemManager {
     label.fontSize = Math.max(12, Math.floor(size * 0.2));
     label.lineHeight = label.fontSize + 6;
     label.node.setPosition(new Vec3(0, 0, 0));
+  }
+
+  private hideScoreMark(parent: Node): void {
+    const scoreMark = parent.getChildByName("ScoreMark");
+    if (!scoreMark) {
+      return;
+    }
+    const label = scoreMark.getComponent(Label);
+    if (label) {
+      label.string = "";
+    }
+    scoreMark.active = false;
   }
 
   private createSpecialFxNode(parent: Node, size: number): Node {
@@ -1494,6 +1510,12 @@ export class ItemManager {
       case "crescent":
         this.traceCrescent(graphics, size, centerY);
         break;
+      case "cloud":
+        this.traceCloud(graphics, size, centerY);
+        break;
+      case "leaf":
+        this.traceLeaf(graphics, size, centerY);
+        break;
       case "gem":
         this.traceRoundedPolygon(
           graphics,
@@ -1633,6 +1655,23 @@ export class ItemManager {
     graphics.close();
   }
 
+  private traceCloud(graphics: Graphics, size: number, centerY: number): void {
+    graphics.moveTo(-size * 0.43, centerY - size * 0.1);
+    graphics.bezierCurveTo(-size * 0.48, centerY + size * 0.1, -size * 0.3, centerY + size * 0.25, -size * 0.13, centerY + size * 0.18);
+    graphics.bezierCurveTo(-size * 0.04, centerY + size * 0.43, size * 0.28, centerY + size * 0.4, size * 0.31, centerY + size * 0.14);
+    graphics.bezierCurveTo(size * 0.48, centerY + size * 0.1, size * 0.5, centerY - size * 0.18, size * 0.28, centerY - size * 0.25);
+    graphics.lineTo(-size * 0.26, centerY - size * 0.25);
+    graphics.bezierCurveTo(-size * 0.36, centerY - size * 0.25, -size * 0.44, centerY - size * 0.2, -size * 0.43, centerY - size * 0.1);
+    graphics.close();
+  }
+
+  private traceLeaf(graphics: Graphics, size: number, centerY: number): void {
+    graphics.moveTo(-size * 0.42, centerY - size * 0.05);
+    graphics.bezierCurveTo(-size * 0.2, centerY + size * 0.44, size * 0.34, centerY + size * 0.42, size * 0.45, centerY + size * 0.02);
+    graphics.bezierCurveTo(size * 0.16, centerY - size * 0.36, -size * 0.28, centerY - size * 0.36, -size * 0.42, centerY - size * 0.05);
+    graphics.close();
+  }
+
   private tracePolygon(graphics: Graphics, points: ShapePoint[]): void {
     if (points.length === 0) {
       return;
@@ -1694,9 +1733,9 @@ export class ItemManager {
 
   private enhance(color: Color, delta: number, alpha = color.a): Color {
     return new Color(
-      Math.min(color.r + delta, 255),
-      Math.min(color.g + delta, 255),
-      Math.min(color.b + delta, 255),
+      Math.max(0, Math.min(color.r + delta, 255)),
+      Math.max(0, Math.min(color.g + delta, 255)),
+      Math.max(0, Math.min(color.b + delta, 255)),
       alpha,
     );
   }

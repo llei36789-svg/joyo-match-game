@@ -1,8 +1,8 @@
-import { Color, Graphics, Layers, Node, Size, Tween, tween, UIOpacity, UITransform, Vec3 } from "cc";
+import { Color, Graphics, Label, Layers, Node, Size, Tween, tween, UIOpacity, UITransform, Vec3 } from "cc";
 import { GameConfig } from "./GameConfig";
 import { ItemManager } from "./ItemManager";
 import { MatchCheck } from "./MatchCheck";
-import { BlockState, GridCellData, ITEM_TYPES, ItemType, Position, SpecialType } from "../data/LevelData";
+import { BlockState, GridCellData, ITEM_SPAWN_WEIGHT_MAP, ITEM_TYPES, ItemType, Position, SpecialType } from "../data/LevelData";
 
 interface GridManagerOptions {
   boardNode: Node;
@@ -51,6 +51,73 @@ export class GridManager {
       return null;
     }
     return this.options.boardNode.children.find((child) => child.uuid === cell.nodeUuid) ?? null;
+  }
+
+  playCellTapEffect(row: number, col: number): void {
+    const node = this.getNode(row, col);
+    if (!node) {
+      return;
+    }
+
+    Tween.stopAllByTarget(node);
+    node.scale = Vec3.ONE.clone();
+    tween(node)
+      .to(0.06, { scale: new Vec3(0.9, 0.9, 1) })
+      .to(0.08, { scale: Vec3.ONE.clone() })
+      .start();
+  }
+
+  showFloatingScore(positions: Position[], score: number): void {
+    if (positions.length === 0 || score <= 0) {
+      return;
+    }
+
+    const center = positions.reduce(
+      (sum, position) => {
+        const cellPosition = this.cellToPosition(position.row, position.col);
+        sum.x += cellPosition.x;
+        sum.y += cellPosition.y;
+        return sum;
+      },
+      new Vec3(0, 0, 0),
+    );
+    center.x /= positions.length;
+    center.y /= positions.length;
+
+    const node = new Node("FloatingScore");
+    node.layer = Layers.Enum.UI_2D;
+    node.parent = this.options.boardNode;
+    node.setPosition(center);
+    node.setSiblingIndex(this.options.boardNode.children.length - 1);
+    node.scale = new Vec3(0.72, 0.72, 1);
+
+    const transform = node.addComponent(UITransform);
+    transform.setContentSize(new Size(170, 70));
+
+    const opacity = node.addComponent(UIOpacity);
+    opacity.opacity = 255;
+
+    const label = node.addComponent(Label);
+    label.string = `+${score}`;
+    label.fontSize = 44;
+    label.lineHeight = 54;
+    label.isBold = true;
+    label.color = new Color(255, 230, 120, 255);
+    label.horizontalAlign = Label.HorizontalAlign.CENTER;
+    label.verticalAlign = Label.VerticalAlign.CENTER;
+    label.overflow = Label.Overflow.SHRINK;
+
+    tween(node)
+      .parallel(
+        tween<Node>()
+          .to(0.12, { scale: new Vec3(1.15, 1.15, 1) })
+          .to(0.42, { position: new Vec3(center.x, center.y + this.options.tileSize * 0.82, 0), scale: Vec3.ONE.clone() }),
+        tween(opacity)
+          .delay(0.16)
+          .to(0.38, { opacity: 0 }),
+      )
+      .call(() => node.destroy())
+      .start();
   }
 
   getBoardNode(): Node {
@@ -234,7 +301,51 @@ export class GridManager {
   }
 
   getRandomItemType(): ItemType {
-    return ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
+    const totalWeight = ITEM_TYPES.reduce((total, itemType) => total + ITEM_SPAWN_WEIGHT_MAP[itemType], 0);
+    let roll = Math.random() * totalWeight;
+
+    for (const itemType of ITEM_TYPES) {
+      roll -= ITEM_SPAWN_WEIGHT_MAP[itemType];
+      if (roll <= 0) {
+        return itemType;
+      }
+    }
+
+    return ITEM_TYPES[0];
+  }
+
+  activateRandomRainbowItem(): boolean {
+    const normalCandidates: Position[] = [];
+    const fallbackCandidates: Position[] = [];
+
+    for (let row = 0; row < this.options.rows; row += 1) {
+      for (let col = 0; col < this.options.cols; col += 1) {
+        const cell = this.gridData[row]?.[col];
+        if (!cell?.itemType || !cell.nodeUuid) {
+          continue;
+        }
+        fallbackCandidates.push({ row, col });
+        if (cell.specialType === SpecialType.None) {
+          normalCandidates.push({ row, col });
+        }
+      }
+    }
+
+    const candidates = normalCandidates.length > 0 ? normalCandidates : fallbackCandidates;
+    if (candidates.length === 0) {
+      return false;
+    }
+
+    const target = candidates[Math.floor(Math.random() * candidates.length)];
+    const cell = this.gridData[target.row][target.col];
+    const node = this.getNode(target.row, target.col);
+    if (!cell.itemType || !node) {
+      return false;
+    }
+
+    cell.specialType = SpecialType.Rainbow;
+    this.options.itemManager.updateItemNode(node, cell.itemType, cell.specialType, this.options.tileSize);
+    return true;
   }
 
   private createInitialItemType(row: number, col: number): ItemType {
@@ -273,13 +384,19 @@ export class GridManager {
   }
 
   private seedGuaranteedHint(): void {
-    const primary = ITEM_TYPES[0];
-    const secondary = ITEM_TYPES[1] ?? primary;
+    const primary = this.getRandomItemType();
+    let secondary = this.getRandomItemType();
+    while (secondary === primary && ITEM_TYPES.length > 1) {
+      secondary = this.getRandomItemType();
+    }
     const seeded = [primary, secondary, primary, primary, secondary];
+    const row = Math.floor(Math.random() * this.options.rows);
+    const startCol = Math.floor(Math.random() * Math.max(1, this.options.cols - seeded.length + 1));
 
-    seeded.forEach((itemType, col) => {
-      const cell = this.gridData[0]?.[col];
-      const node = this.getNode(0, col);
+    seeded.forEach((itemType, index) => {
+      const col = startCol + index;
+      const cell = this.gridData[row]?.[col];
+      const node = this.getNode(row, col);
       if (!cell || !node) {
         return;
       }

@@ -38,12 +38,6 @@ export enum BlockState {
   Locked = "locked",
 }
 
-export enum LevelGoalType {
-  Score = "score",
-  Collect = "collect",
-  BreakObstacle = "breakObstacle",
-}
-
 export enum GameState {
   WAIT_INPUT = "WAIT_INPUT",
   SWAPPING = "SWAPPING",
@@ -69,13 +63,9 @@ export interface GridCellData {
 export interface LevelConfig {
   id: number;
   name: string;
-  moves: number;
-  goalType: LevelGoalType;
-  targetScore: number;
-  starScores: [number, number, number];
+  durationSec: number;
   difficultyFactor: number;
   expectedDurationSec: number;
-  targetPassRate: number;
 }
 
 export const ITEM_COLOR_MAP: Record<ItemType, Color> = {
@@ -112,59 +102,38 @@ export const ITEM_TYPES: ItemType[] = [
   ItemType.Cyan,
   ItemType.Lime,
   ItemType.Teal,
-  ItemType.Indigo,
-  ItemType.Magenta,
-  ItemType.Gold,
-  ItemType.Coral,
-  ItemType.Mint,
-  ItemType.Azure,
-  ItemType.Rose,
-  ItemType.Amber,
-  ItemType.Violet,
-  ItemType.Pearl,
 ];
+
+export const ITEM_SCORE_MAP: Record<ItemType, number> = ITEM_TYPES.reduce(
+  (scoreMap, itemType, index) => {
+    scoreMap[itemType] = (index + 1) * 10;
+    return scoreMap;
+  },
+  {} as Record<ItemType, number>,
+);
+
+export const ITEM_SPAWN_WEIGHT_MAP: Record<ItemType, number> = ITEM_TYPES.reduce(
+  (weightMap, itemType, index) => {
+    weightMap[itemType] = ITEM_TYPES.length - index;
+    return weightMap;
+  },
+  {} as Record<ItemType, number>,
+);
 
 const LEVEL_NAMES = [
   "Score Rush",
-  "Chain Spark",
-  "Prism Route",
-  "Meteor Drop",
-  "Mirror Pulse",
-  "Aurora Burst",
-  "Crystal Reactor",
-  "Nova Ladder",
-  "Starlight Vault",
-  "Crown Finale",
 ];
 
-const LEVEL_MOVE_LIMITS = [22, 21, 20, 19, 18, 17, 16, 15, 14, 13];
-const TARGET_PASS_RATE = 0.2;
-const ESTIMATED_SECONDS_PER_MOVE = 5;
-const BASE_TARGET_SCORE = 9000;
-
-function roundScore(value: number): number {
-  return Math.round(value / 100) * 100;
-}
+const LEVEL_DURATION_SEC = 180;
 
 export const LEVELS: LevelConfig[] = LEVEL_NAMES.map((name, index) => {
   const difficultyFactor = Number(Math.pow(1.1, index).toFixed(2));
-  const targetScore = roundScore(BASE_TARGET_SCORE * difficultyFactor);
-  const moves = LEVEL_MOVE_LIMITS[index] ?? LEVEL_MOVE_LIMITS[LEVEL_MOVE_LIMITS.length - 1];
-  const expectedDurationSec = moves * ESTIMATED_SECONDS_PER_MOVE;
 
   return {
     id: index + 1,
     name: `Chapter ${index + 1} - ${name}`,
-    moves,
-    goalType: LevelGoalType.Score,
-    targetScore,
-    starScores: [
-      targetScore,
-      roundScore(targetScore * 1.2),
-      roundScore(targetScore * 1.4),
-    ],
+    durationSec: LEVEL_DURATION_SEC,
     difficultyFactor,
-    expectedDurationSec,
-    targetPassRate: TARGET_PASS_RATE,
+    expectedDurationSec: LEVEL_DURATION_SEC,
   };
 });

@@ -11,6 +11,8 @@ import {
   Size,
   Sprite,
   SpriteFrame,
+  Tween,
+  tween,
   UITransform,
   Vec3,
   EventTouch,
@@ -20,12 +22,26 @@ import { GameConfig } from "./core/GameConfig";
 import { GameManager } from "./core/GameManager";
 import { GridManager } from "./core/GridManager";
 import { ItemManager } from "./core/ItemManager";
-import { LEVELS } from "./data/LevelData";
+import { ITEM_SCORE_MAP, ItemType, LEVELS } from "./data/LevelData";
 import { PoolUtil } from "./util/PoolUtil";
+import { UIBonusPanel } from "./ui/UIBonusPanel";
 import { UIGamePanel } from "./ui/UIGamePanel";
 import { UIResultPanel } from "./ui/UIResultPanel";
 
 const { ccclass } = _decorator;
+
+const ITEM_SCORE_DESCRIPTIONS: Array<{ name: string; itemType: ItemType }> = [
+  { name: "方块", itemType: ItemType.Red },
+  { name: "圆圈", itemType: ItemType.Yellow },
+  { name: "三角形", itemType: ItemType.Blue },
+  { name: "菱形", itemType: ItemType.Green },
+  { name: "星星", itemType: ItemType.Purple },
+  { name: "六边形", itemType: ItemType.Orange },
+  { name: "五边形", itemType: ItemType.Pink },
+  { name: "爱心", itemType: ItemType.Cyan },
+  { name: "太阳", itemType: ItemType.Lime },
+  { name: "加号", itemType: ItemType.Teal },
+];
 
 interface LayoutMetrics {
   stageWidth: number;
@@ -46,8 +62,10 @@ export class GameRoot extends Component {
   private gridManager: GridManager | null = null;
   private boardNode: Node | null = null;
   private gamePanel: UIGamePanel | null = null;
+  private bonusPanel: UIBonusPanel | null = null;
   private resultPanel: UIResultPanel | null = null;
   private layout: LayoutMetrics | null = null;
+  private instructionPanel: Node | null = null;
 
   onLoad(): void {
     this.buildScene();
@@ -104,10 +122,15 @@ export class GameRoot extends Component {
       () => this.gameManager?.handlePrimaryResultAction(),
       () => this.gameManager?.handleSecondaryResultAction(),
     );
+
+    this.bonusPanel = this.node.addComponent(UIBonusPanel);
+    this.bonusPanel.buildLayout(this.createPanel.bind(this), this.createLabel.bind(this), this.createButton.bind(this));
+
+    this.createInstructionPanel();
   }
 
   private bootstrapGame(): void {
-    if (!this.boardNode || !this.gamePanel || !this.resultPanel) {
+    if (!this.boardNode || !this.gamePanel || !this.bonusPanel || !this.resultPanel) {
       return;
     }
 
@@ -126,9 +149,16 @@ export class GameRoot extends Component {
       gridManager: this.gridManager,
       itemManager,
       uiPanel: this.gamePanel,
+      bonusPanel: this.bonusPanel,
       resultPanel: this.resultPanel,
       statusCallback: (_message) => undefined,
     });
+    this.bonusPanel.setActions(
+      () => {
+        void this.gameManager?.handleBonusScoreAdAction();
+      },
+      () => this.gameManager?.dismissBonusScoreOffer(),
+    );
 
     this.gameManager.startLevel(LEVELS[0]);
   }
@@ -263,13 +293,14 @@ export class GameRoot extends Component {
     const headerHeight = layout.headerSize.height;
     const titleAspect = 547 / 150;
     const titleImageHeight = Math.min(headerHeight * 0.82, 158);
-    const titleImageWidth = Math.min(headerWidth - 76, titleImageHeight * titleAspect);
+    const titleImageWidth = Math.min(headerWidth - 164, titleImageHeight * titleAspect);
 
-    this.createTitleImage(parent, new Size(titleImageWidth, titleImageHeight));
+    this.createTitleImage(parent, new Vec3(-28, 2, 0), new Size(titleImageWidth, titleImageHeight));
+    this.createInstructionButton(parent, new Vec3(headerWidth / 2 - 58, 6, 0));
   }
 
-  private createTitleImage(parent: Node, size: Size): void {
-    const titleNode = this.createNode("TitleImage", parent, new Vec3(0, 2, 0), size);
+  private createTitleImage(parent: Node, position: Vec3, size: Size): void {
+    const titleNode = this.createNode("TitleImage", parent, position, size);
     const sprite = titleNode.addComponent(Sprite);
     sprite.type = Sprite.Type.SIMPLE;
     sprite.sizeMode = Sprite.SizeMode.CUSTOM;
@@ -280,6 +311,156 @@ export class GameRoot extends Component {
       }
       sprite.spriteFrame = spriteFrame;
     });
+  }
+
+  private createInstructionButton(parent: Node, position: Vec3): void {
+    const button = this.createPanel(
+      "InstructionButton",
+      parent,
+      position,
+      new Size(84, 84),
+      new Color(36, 48, 100, 245),
+      new Color(255, 219, 130, 230),
+      42,
+      4,
+    );
+    const label = this.createLabel(
+      "InstructionButtonLabel",
+      button,
+      Vec3.ZERO,
+      new Size(62, 62),
+      48,
+      new Color(255, 240, 188, 255),
+      true,
+    );
+    label.string = "?";
+    this.applyButtonPressEffect(button);
+    button.on(NodeEventType.TOUCH_END, () => this.showInstructionPanel(), this);
+  }
+
+  private createInstructionPanel(): void {
+    const layout = this.layout ?? this.getLayoutMetrics();
+    const mask = this.createPanel(
+      "InstructionMask",
+      this.node,
+      Vec3.ZERO,
+      new Size(layout.stageWidth, layout.stageHeight),
+      new Color(4, 8, 18, 218),
+      new Color(0, 0, 0, 0),
+      0,
+      0,
+    );
+    mask.active = false;
+    mask.on(NodeEventType.TOUCH_START, this.swallowTouch, this);
+    mask.on(NodeEventType.TOUCH_END, this.swallowTouch, this);
+
+    const cardSize = new Size(Math.min(layout.contentWidth - 4, 704), Math.min(layout.stageHeight - 140, 1080));
+    const card = this.createPanel(
+      "InstructionCard",
+      mask,
+      Vec3.ZERO,
+      cardSize,
+      new Color(17, 24, 50, 252),
+      new Color(151, 196, 255, 190),
+      36,
+      4,
+    );
+
+    const title = this.createLabel(
+      "InstructionTitle",
+      card,
+      new Vec3(0, cardSize.height / 2 - 82, 0),
+      new Size(cardSize.width - 96, 62),
+      52,
+      new Color(255, 235, 172, 255),
+      true,
+    );
+    title.string = "玩法说明";
+
+    const desc = this.createLabel(
+      "InstructionDesc",
+      card,
+      new Vec3(0, cardSize.height / 2 - 238, 0),
+      new Size(cardSize.width - 74, 230),
+      31,
+      new Color(224, 234, 255, 255),
+    );
+    desc.lineHeight = 39;
+    desc.string = [
+      "3 分钟内尽量获得更高总分。",
+      "点击任意两个方块即可交换，形成 3 个及以上相同图标会消除。",
+      "低分图标更常出现，高分图标更稀有。",
+      "4 连、5 连、连锁和特殊方块会带来额外加分。",
+      "倒计时结束时可看广告增加 30 秒挑战时间。",
+      "打出高分消除时会弹出幸运翻倍，弹窗和广告期间挑战计时会暂停。",
+    ].join("\n");
+
+    const scoreTitle = this.createLabel(
+      "InstructionScoreTitle",
+      card,
+      new Vec3(0, cardSize.height / 2 - 405, 0),
+      new Size(cardSize.width - 90, 42),
+      34,
+      new Color(255, 235, 172, 255),
+      true,
+    );
+    scoreTitle.string = "方块分数";
+
+    const scoreLines = ITEM_SCORE_DESCRIPTIONS.map(
+      (entry) => `${entry.name}：${ITEM_SCORE_MAP[entry.itemType]}分`,
+    );
+    const leftScoreList = this.createLabel(
+      "InstructionScoreListLeft",
+      card,
+      new Vec3(-cardSize.width * 0.25, -cardSize.height * 0.08, 0),
+      new Size(cardSize.width * 0.42, 450),
+      29,
+      new Color(224, 234, 255, 255),
+    );
+    leftScoreList.horizontalAlign = Label.HorizontalAlign.LEFT;
+    leftScoreList.lineHeight = 41;
+    leftScoreList.string = scoreLines.slice(0, 10).join("\n");
+
+    const rightScoreList = this.createLabel(
+      "InstructionScoreListRight",
+      card,
+      new Vec3(cardSize.width * 0.25, -cardSize.height * 0.08, 0),
+      new Size(cardSize.width * 0.42, 450),
+      29,
+      new Color(224, 234, 255, 255),
+    );
+    rightScoreList.horizontalAlign = Label.HorizontalAlign.LEFT;
+    rightScoreList.lineHeight = 41;
+    rightScoreList.string = scoreLines.slice(10).join("\n");
+
+    const closeButton = this.createButton(
+      "InstructionCloseButton",
+      card,
+      new Vec3(0, -cardSize.height / 2 + 84, 0),
+      new Size(310, 90),
+      "知道了",
+      true,
+    );
+    closeButton.on(NodeEventType.TOUCH_END, () => this.hideInstructionPanel(), this);
+
+    this.instructionPanel = mask;
+  }
+
+  private showInstructionPanel(): void {
+    if (this.instructionPanel) {
+      this.instructionPanel.active = true;
+      this.instructionPanel.setSiblingIndex(this.node.children.length - 1);
+    }
+  }
+
+  private hideInstructionPanel(): void {
+    if (this.instructionPanel) {
+      this.instructionPanel.active = false;
+    }
+  }
+
+  private swallowTouch(event: EventTouch): void {
+    event.propagationStopped = true;
   }
 
   private createTitleIcon(parent: Node, position: Vec3, direction: number): void {
@@ -411,7 +592,21 @@ export class GameRoot extends Component {
       true,
     );
     label.string = text;
+    this.applyButtonPressEffect(buttonNode);
     return buttonNode;
+  }
+
+  private applyButtonPressEffect(buttonNode: Node): void {
+    const pressScale = new Vec3(0.93, 0.93, 1);
+    const normalScale = Vec3.ONE.clone();
+    const scaleTo = (scale: Vec3): void => {
+      Tween.stopAllByTarget(buttonNode);
+      tween(buttonNode).to(0.08, { scale }).start();
+    };
+
+    buttonNode.on(NodeEventType.TOUCH_START, () => scaleTo(pressScale), this);
+    buttonNode.on(NodeEventType.TOUCH_END, () => scaleTo(normalScale), this);
+    buttonNode.on(NodeEventType.TOUCH_CANCEL, () => scaleTo(normalScale), this);
   }
 
   private createPanel(

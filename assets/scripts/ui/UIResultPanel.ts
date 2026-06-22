@@ -54,6 +54,7 @@ export class UIResultPanel extends Component {
   private sparkleNodes: Node[] = [];
   private onPrimary: (() => void) | null = null;
   private onSecondary: (() => void) | null = null;
+  private secondaryEnabled = true;
 
   buildLayout(createPanel: PanelFactory, createLabel: LabelFactory, createButton: ButtonFactory): void {
     const rootSize = this.node.getComponent(UITransform)?.contentSize ?? new Size(GameConfig.stage.width, GameConfig.stage.height);
@@ -163,7 +164,11 @@ export class UIResultPanel extends Component {
     this.maskNode.on(NodeEventType.TOUCH_START, this.swallowTouch, this);
     this.maskNode.on(NodeEventType.TOUCH_END, this.swallowTouch, this);
     this.primaryButton.on(NodeEventType.TOUCH_END, () => this.onPrimary?.(), this);
-    this.secondaryButton.on(NodeEventType.TOUCH_END, () => this.onSecondary?.(), this);
+    this.secondaryButton.on(NodeEventType.TOUCH_END, () => {
+      if (this.secondaryEnabled) {
+        this.onSecondary?.();
+      }
+    }, this);
 
     this.hide();
   }
@@ -171,6 +176,21 @@ export class UIResultPanel extends Component {
   setActions(onPrimary: () => void, onSecondary: () => void): void {
     this.onPrimary = onPrimary;
     this.onSecondary = onSecondary;
+  }
+
+  setSecondaryEnabled(enabled: boolean, text?: string): void {
+    this.secondaryEnabled = enabled;
+    if (this.secondaryButton) {
+      this.secondaryButton.scale = Vec3.ONE.clone();
+    }
+    if (this.secondaryButtonLabel) {
+      if (text !== undefined) {
+        this.secondaryButtonLabel.string = text;
+      }
+      this.secondaryButtonLabel.color = enabled
+        ? new Color(225, 233, 255, 255)
+        : new Color(190, 198, 220, 220);
+    }
   }
 
   show(payload: ResultPayload): void {
@@ -195,11 +215,9 @@ export class UIResultPanel extends Component {
       this.primaryButtonLabel.string = payload.actionText;
     }
     const secondaryText = payload.secondaryActionText ?? "";
+    this.setSecondaryEnabled(true, secondaryText);
     if (this.secondaryButton) {
       this.secondaryButton.active = secondaryText.length > 0;
-    }
-    if (this.secondaryButtonLabel) {
-      this.secondaryButtonLabel.string = secondaryText;
     }
   }
 

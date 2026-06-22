@@ -13,15 +13,18 @@ export const GameConfig = {
     dropDurationPerCell: 0.06,
   },
   score: {
-    normal: 100,
-    fourMatch: 200,
-    fiveMatch: 300,
-    chainBonus: 50,
-    specialMultiplier: 1.6,
+    fourMatchBonus: 40,
+    fiveMatchBonus: 80,
+    chainBonus: 30,
+    specialMultiplier: 1.4,
   },
-  revive: {
-    extraMoves: 10,
-    shuffleDuration: 0.24,
-    adUnitId: "adunit-revive-placeholder",
+  powerup: {
+    extraTimeSec: 30,
+    adUnitId: "adunit-extra-time-placeholder",
+  },
+  bonusAd: {
+    minScore: 180,
+    cooldownSec: 18,
+    adUnitId: "adunit-score-bonus-placeholder",
   },
 };
