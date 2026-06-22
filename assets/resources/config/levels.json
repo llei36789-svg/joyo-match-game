@@ -1,0 +1,142 @@
+{
+  "levels": [
+    {
+      "id": "level-001",
+      "title": "签到奖励异常",
+      "brief": "活动需求写明第 7 天签到应发放稀有道具箱，但玩家反馈领取后背包中没有新增。",
+      "hints": [
+        "需求文档：第 7 天奖励应立即入背包",
+        "玩家反馈：提示领取成功，但背包数量未变化",
+        "日志线索：请求返回 code=0"
+      ],
+      "options": [
+        {
+          "id": "opt-1",
+          "title": "音效播放稍慢",
+          "description": "点击领取后音效延迟约 0.3 秒播放",
+          "category": "performance",
+          "severity": "low",
+          "isBug": false
+        },
+        {
+          "id": "opt-2",
+          "title": "奖励没有发到背包",
+          "description": "表现成功但道具实际未到账，属于功能异常",
+          "category": "function",
+          "severity": "high",
+          "isBug": true
+        },
+        {
+          "id": "opt-3",
+          "title": "按钮高亮颜色偏浅",
+          "description": "按钮选中态和设计稿存在细微差异",
+          "category": "ui",
+          "severity": "low",
+          "isBug": false
+        },
+        {
+          "id": "opt-4",
+          "title": "背包排序变化",
+          "description": "新道具理论上可能被排到列表较后位置",
+          "category": "experience",
+          "severity": "medium",
+          "isBug": false
+        }
+      ],
+      "correctOptionId": "opt-2",
+      "analysis": "这是标准的功能 bug：前端提示成功，但关键结果未达成。"
+    },
+    {
+      "id": "level-002",
+      "title": "活动文案与规则不一致",
+      "brief": "活动主界面写的是消耗 60 体力可领取奖励，但配置表实际门槛是 80。",
+      "hints": [
+        "运营文案：60 体力",
+        "配置字段：needEnergy=80",
+        "玩家反馈：满足 60 后无法领取"
+      ],
+      "options": [
+        {
+          "id": "opt-1",
+          "title": "规则文案错误",
+          "description": "展示信息和实际规则不一致，造成误导",
+          "category": "text",
+          "severity": "medium",
+          "isBug": true
+        },
+        {
+          "id": "opt-2",
+          "title": "界面背景图压缩失真",
+          "description": "背景图边缘有轻微模糊",
+          "category": "ui",
+          "severity": "low",
+          "isBug": false
+        },
+        {
+          "id": "opt-3",
+          "title": "奖励弹窗出现位置偏下",
+          "description": "弹窗距离顶部比设计稿低 8 像素",
+          "category": "ui",
+          "severity": "low",
+          "isBug": false
+        },
+        {
+          "id": "opt-4",
+          "title": "按钮点击有延迟",
+          "description": "弱网下点击反馈稍慢",
+          "category": "performance",
+          "severity": "low",
+          "isBug": false
+        }
+      ],
+      "correctOptionId": "opt-1",
+      "analysis": "这类问题很适合放进找 bug 游戏里，因为它需要对需求和配置同时敏感。"
+    },
+    {
+      "id": "level-003",
+      "title": "新手引导卡死",
+      "brief": "新手引导要求点击强化按钮，但该按钮被临时浮层遮挡，导致流程无法继续。",
+      "hints": [
+        "流程日志：GuideStep=EquipUpgrade",
+        "玩家反馈：怎么点都没反应",
+        "界面现象：弹出的限时礼包浮层挡住了目标按钮"
+      ],
+      "options": [
+        {
+          "id": "opt-1",
+          "title": "礼包浮层关闭按钮太小",
+          "description": "关闭按钮触控区域不足",
+          "category": "experience",
+          "severity": "medium",
+          "isBug": false
+        },
+        {
+          "id": "opt-2",
+          "title": "引导流程被遮挡导致卡死",
+          "description": "关键流程无法完成，属于高优先级阻断问题",
+          "category": "function",
+          "severity": "high",
+          "isBug": true
+        },
+        {
+          "id": "opt-3",
+          "title": "浮层动效不够顺滑",
+          "description": "出现帧率波动，但不影响功能",
+          "category": "performance",
+          "severity": "low",
+          "isBug": false
+        },
+        {
+          "id": "opt-4",
+          "title": "引导手指透明度偏低",
+          "description": "视觉表现略弱，但仍可识别",
+          "category": "ui",
+          "severity": "low",
+          "isBug": false
+        }
+      ],
+      "correctOptionId": "opt-2",
+      "analysis": "阻断新手主流程的问题通常优先级很高，做成训练关卡也很贴近测试实际。"
+    }
+  ]
+}
