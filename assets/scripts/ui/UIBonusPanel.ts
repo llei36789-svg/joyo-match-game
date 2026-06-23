@@ -91,7 +91,7 @@ export class UIBonusPanel extends Component {
       new Color(255, 229, 245, 255),
       true,
     );
-    badgeLabel.string = "超级大奖";
+    badgeLabel.string = "死局救援";
 
     const title = createLabel(
       "BonusTitle",
@@ -102,7 +102,7 @@ export class UIBonusPanel extends Component {
       new Color(255, 241, 186, 255),
       true,
     );
-    title.string = "清屏机会";
+    title.string = "打乱棋盘";
 
     const desc = createLabel(
       "BonusDesc",
@@ -113,7 +113,7 @@ export class UIBonusPanel extends Component {
       new Color(220, 232, 255, 255),
     );
     desc.lineHeight = 38;
-    desc.string = "看广告立即清除整个棋盘\n一局最多出现 2 次";
+    desc.string = "当前没有可消除走法\n看广告打乱后继续冲分";
 
     this.scoreLabel = createLabel(
       "BonusScore",
@@ -131,7 +131,7 @@ export class UIBonusPanel extends Component {
       card,
       new Vec3(0, -156, 0),
       new Size(392, 92),
-      "看广告触发",
+      "看广告打乱",
       true,
     );
     this.claimButtonLabel = this.claimButton.getChildByName("BonusClaimButton-label")?.getComponent(Label) ?? null;
@@ -145,7 +145,7 @@ export class UIBonusPanel extends Component {
       card,
       new Vec3(0, -244, 0),
       new Size(252, 68),
-      "暂时不要",
+      "结束本局",
       false,
     );
 
@@ -166,7 +166,7 @@ export class UIBonusPanel extends Component {
     this.onClose = onClose;
   }
 
-  show(remainingCount: number): void {
+  show(_remainingCount?: number): void {
     if (!this.maskNode) {
       return;
     }
@@ -174,7 +174,7 @@ export class UIBonusPanel extends Component {
     this.maskNode.active = true;
     this.maskNode.setSiblingIndex(this.node.children.length - 1);
     if (this.scoreLabel) {
-      this.scoreLabel.string = `清除全屏\n剩余 ${remainingCount} 次`;
+      this.scoreLabel.string = "死局了\n继续冲分";
     }
     this.setClaimEnabled(true);
     this.sparkleNodes.forEach((node) => {
@@ -198,7 +198,7 @@ export class UIBonusPanel extends Component {
       this.claimButton.scale = Vec3.ONE.clone();
     }
     if (this.claimButtonLabel) {
-      this.claimButtonLabel.string = enabled ? "看广告触发" : "触发中...";
+      this.claimButtonLabel.string = enabled ? "看广告打乱" : "打乱中...";
       this.claimButtonLabel.color = enabled
         ? new Color(182, 247, 255, 255)
         : new Color(190, 198, 220, 220);

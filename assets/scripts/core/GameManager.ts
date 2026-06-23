@@ -2,7 +2,9 @@ import { GameConfig } from "./GameConfig";
 import { DropManager } from "./DropManager";
 import { GridManager } from "./GridManager";
 import { ItemManager } from "./ItemManager";
+import { LeaderboardService } from "./LeaderboardService";
 import { MatchCheck } from "./MatchCheck";
+import { SoundManager } from "./SoundManager";
 import { BlockState, GameState, ITEM_SCORE_MAP, ITEM_TYPES, ItemType, LEVELS, LevelConfig, Position, SpecialType } from "../data/LevelData";
 import { TweenUtil } from "../util/TweenUtil";
 import { UIBonusPanel } from "../ui/UIBonusPanel";
@@ -34,6 +36,9 @@ interface GameManagerOptions {
   uiPanel: UIGamePanel;
   taskPanel: UITaskPanel;
   bonusPanel: UIBonusPanel;
+  leaderboardService: LeaderboardService;
+  onLeaderboardScoreSubmitted?: () => void;
+  soundManager: SoundManager;
   lotteryPanel: UILotteryPanel;
   resultPanel: UIResultPanel;
   statusCallback: (message: string) => void;
@@ -61,7 +66,6 @@ interface LotteryReward {
   detail: string;
   rarity: LotteryRarity;
   scoreBonus?: number;
-  timeBonusSec?: number;
   isBigWin?: boolean;
 }
 
@@ -96,6 +100,9 @@ export class GameManager {
   private readonly uiPanel: UIGamePanel;
   private readonly taskPanel: UITaskPanel;
   private readonly bonusPanel: UIBonusPanel;
+  private readonly leaderboardService: LeaderboardService;
+  private readonly onLeaderboardScoreSubmitted?: () => void;
+  private readonly soundManager: SoundManager;
   private readonly lotteryPanel: UILotteryPanel;
   private readonly resultPanel: UIResultPanel;
   private readonly statusCallback: (message: string) => void;
@@ -107,12 +114,8 @@ export class GameManager {
   private countdownTimer: ReturnType<typeof setInterval> | null = null;
   private selectedCell: Position | null = null;
   private chainStep = 0;
-  private isWatchingPowerAd = false;
-  private hasUsedExtraTimeAd = false;
   private isWatchingBonusAd = false;
-  private hasPendingScreenClearAd = false;
-  private bonusAdShownCount = 0;
-  private lastBonusOfferAtMs = 0;
+  private hasPendingShuffleAd = false;
   private activeTask: ActiveTask | null = null;
   private lotteryPity = 0;
 
@@ -122,12 +125,23 @@ export class GameManager {
     this.uiPanel = options.uiPanel;
     this.taskPanel = options.taskPanel;
     this.bonusPanel = options.bonusPanel;
+    this.leaderboardService = options.leaderboardService;
+    this.onLeaderboardScoreSubmitted = options.onLeaderboardScoreSubmitted;
+    this.soundManager = options.soundManager;
     this.lotteryPanel = options.lotteryPanel;
     this.resultPanel = options.resultPanel;
     this.statusCallback = options.statusCallback;
   }
 
   startLevel(level: LevelConfig): void {
+    if (GameConfig.debug.refillLogs) {
+      console.warn("[JoyoDebug] GameManager loaded - debug logs enabled", {
+        level: level.name,
+        durationSec: level.durationSec,
+        board: `${GameConfig.board.rows}x${GameConfig.board.cols}`,
+      });
+    }
+
     this.clearCountdownTimer();
     this.clearHintVisuals();
     this.currentLevelIndex = Math.max(
@@ -135,15 +149,11 @@ export class GameManager {
       LEVELS.findIndex((entry) => entry.id === level.id),
     );
     this.score = 0;
-    this.timeLeftSec = level.durationSec;
+    this.timeLeftSec = Math.max(level.durationSec, 1);
     this.selectedCell = null;
     this.chainStep = 0;
-    this.hasUsedExtraTimeAd = false;
-    this.isWatchingPowerAd = false;
     this.isWatchingBonusAd = false;
-    this.hasPendingScreenClearAd = false;
-    this.bonusAdShownCount = 0;
-    this.lastBonusOfferAtMs = 0;
+    this.hasPendingShuffleAd = false;
     this.lotteryPity = 0;
     this.activeTask = this.createNextTask();
     this.clearBonusScoreOffer();
@@ -152,7 +162,7 @@ export class GameManager {
     this.gridManager.initializeGrid();
     this.uiPanel.renderLevelInfo(level);
     this.refreshTaskUi();
-    this.refreshUi("点击任意两个方块进行交换");
+    this.refreshUi("点击方块，再点相邻空格或可消除方块");
     this.startCountdownTimer();
   }
 
@@ -170,57 +180,21 @@ export class GameManager {
   }
 
   handleSecondaryResultAction(): void {
-    void this.handleExtraTimeAdAction();
-  }
-
-  async handleExtraTimeAdAction(): Promise<void> {
-    if (this.isWatchingPowerAd || this.state !== GameState.LEVEL_END) {
-      return;
-    }
-
-    if (this.hasUsedExtraTimeAd) {
-      this.statusCallback("本局加时机会已使用");
-      return;
-    }
-
-    this.isWatchingPowerAd = true;
-    this.resultPanel.setSecondaryEnabled(false, "广告中...");
-    this.statusCallback("正在拉起广告...");
-    const watched = await this.watchRewardedAd(GameConfig.powerup.adUnitId);
-    this.isWatchingPowerAd = false;
-    if (!watched) {
-      this.statusCallback("完整观看广告后才能增加挑战时间");
-      this.resultPanel.setSecondaryEnabled(true, `看广告 +${GameConfig.powerup.extraTimeSec}秒`);
-      return;
-    }
-
-    if (!this.isLevelEnded()) {
-      return;
-    }
-
-    this.selectedCell = null;
-    this.gridManager.clearSelection();
-    this.clearHintVisuals();
-    this.hasUsedExtraTimeAd = true;
-    this.timeLeftSec = GameConfig.powerup.extraTimeSec;
-    this.state = GameState.WAIT_INPUT;
-    this.resultPanel.hide();
-    this.refreshUi(`挑战时间 +${GameConfig.powerup.extraTimeSec} 秒`);
-    this.startCountdownTimer();
+    return;
   }
 
   async handleBonusScoreAdAction(): Promise<void> {
-    if (this.isWatchingBonusAd || !this.hasPendingScreenClearAd || this.state === GameState.LEVEL_END) {
+    if (this.isWatchingBonusAd || !this.hasPendingShuffleAd || this.state === GameState.LEVEL_END) {
       return;
     }
 
     this.bonusPanel.setClaimEnabled(false);
     this.isWatchingBonusAd = true;
-    this.statusCallback("正在触发超级大奖...");
+    this.statusCallback("正在打乱棋盘...");
     const watched = await this.watchRewardedAd(GameConfig.bonusAd.adUnitId);
     this.isWatchingBonusAd = false;
     if (!watched) {
-      this.statusCallback("完整观看广告后才能清除全屏");
+      this.statusCallback("完整观看广告后才能打乱棋盘");
       this.bonusPanel.setClaimEnabled(true);
       return;
     }
@@ -231,7 +205,16 @@ export class GameManager {
     }
 
     this.clearBonusScoreOffer();
-    await this.triggerScreenClearPrize();
+    this.state = GameState.DROPING;
+    await this.gridManager.shuffleBoard(0.32);
+
+    this.state = GameState.WAIT_INPUT;
+    if (!this.hasAvailableMove()) {
+      this.presentDeadlockShuffleOffer();
+      return;
+    }
+
+    this.refreshUi("棋盘已打乱，继续移动或消除方块");
     this.resumeCountdownTimer();
   }
 
@@ -240,12 +223,40 @@ export class GameManager {
       return;
     }
 
-    this.clearBonusScoreOffer();
-    this.resumeCountdownTimer();
+    this.endLevel("死局结束，本局分数已结算。");
   }
 
   async handleCellTap(row: number, col: number): Promise<void> {
     if (this.state !== GameState.WAIT_INPUT) {
+      return;
+    }
+
+    if (GameConfig.debug.refillLogs) {
+      console.warn("[GameManager] tap before repair", JSON.stringify({
+        row,
+        col,
+        cell: this.gridManager.getDebugCellInfo(row, col),
+        summary: this.gridManager.getDebugBoardSummary(),
+      }));
+    }
+
+    if (await this.repairBoardIfNeeded()) {
+      this.state = GameState.WAIT_INPUT;
+      if (GameConfig.debug.refillLogs) {
+        console.warn("[GameManager] tap after repair", JSON.stringify({
+          row,
+          col,
+          cell: this.gridManager.getDebugCellInfo(row, col),
+          summary: this.gridManager.getDebugBoardSummary(),
+        }));
+      }
+    }
+
+    const tappedCell = this.gridManager.getCell(row, col);
+    if (!this.hasMovableItem({ row, col }) && !this.selectedCell) {
+      this.selectedCell = null;
+      this.gridManager.clearSelection();
+      this.statusCallback("这里没有方块");
       return;
     }
 
@@ -255,15 +266,44 @@ export class GameManager {
     if (!this.selectedCell) {
       this.selectedCell = { row, col };
       this.gridManager.highlightCell(this.selectedCell);
-      this.statusCallback("已选中方块，继续点击任意方块交换");
+      this.statusCallback("再点相邻空格，或能消除的相邻方块");
       return;
     }
 
     const next = { row, col };
+    if (!this.hasMovableItem(this.selectedCell)) {
+      this.selectedCell = null;
+      this.gridManager.clearSelection();
+      this.statusCallback("请先选择一个方块");
+      return;
+    }
+
     if (this.selectedCell.row === next.row && this.selectedCell.col === next.col) {
       this.selectedCell = null;
       this.gridManager.clearSelection();
       this.statusCallback("已取消选择");
+      return;
+    }
+
+    if (!this.gridManager.areAdjacent(this.selectedCell, next)) {
+      this.selectedCell = null;
+      this.gridManager.clearSelection();
+      this.statusCallback("只能和相邻方块交换一步");
+      return;
+    }
+
+    if (!tappedCell?.itemType) {
+      const first = this.selectedCell;
+      this.selectedCell = null;
+      this.gridManager.clearSelection();
+      await this.tryMoveToEmpty(first, next);
+      return;
+    }
+
+    if (!this.matchCheck.wouldSwapResolveImmediately(this.gridManager.gridData, this.selectedCell, next)) {
+      this.selectedCell = null;
+      this.gridManager.clearSelection();
+      this.statusCallback("这一步不能消除，不能移动");
       return;
     }
 
@@ -273,7 +313,58 @@ export class GameManager {
     await this.trySwap(first, next);
   }
 
+  private hasMovableItem(position: Position): boolean {
+    const cell = this.gridManager.getCell(position.row, position.col);
+    return Boolean(cell?.itemType && cell.nodeUuid);
+  }
+
+  private isEmptyCell(position: Position): boolean {
+    const cell = this.gridManager.getCell(position.row, position.col);
+    return Boolean(cell && !cell.itemType && !cell.nodeUuid);
+  }
+
+  private async tryMoveToEmpty(first: Position, second: Position): Promise<void> {
+    if (!this.gridManager.areAdjacent(first, second)) {
+      this.statusCallback("只能移动到相邻格子");
+      return;
+    }
+
+    if (!this.hasMovableItem(first) || !this.isEmptyCell(second)) {
+      this.statusCallback("只能把方块移动到相邻空格");
+      return;
+    }
+
+    this.clearHintVisuals();
+    this.state = GameState.SWAPPING;
+    this.statusCallback("移动中...");
+
+    await this.animateMoveToEmpty(first, second);
+    this.gridManager.swapCells(first, second);
+
+    const analysis = this.matchCheck.findMatches(this.gridManager.gridData, [second]);
+    this.chainStep = 0;
+    if (analysis.allMatches.length > 0) {
+      await this.resolveMatches(analysis.allMatches, analysis.specialSpawn);
+    } else {
+      this.state = GameState.DROPING;
+      await this.refillBoardAndResolveCascades();
+      this.refreshUi("已移动到空格");
+    }
+
+    await this.finishTurn();
+  }
+
   private async trySwap(first: Position, second: Position): Promise<void> {
+    if (!this.gridManager.areAdjacent(first, second)) {
+      this.statusCallback("只能和相邻方块交换一步");
+      return;
+    }
+
+    if (!this.matchCheck.wouldSwapResolveImmediately(this.gridManager.gridData, first, second)) {
+      this.statusCallback("这一步不能消除，不能移动");
+      return;
+    }
+
     this.clearHintVisuals();
     this.state = GameState.SWAPPING;
     this.statusCallback("交换中...");
@@ -295,14 +386,15 @@ export class GameManager {
 
     this.chainStep = 0;
     if (matchedPositions.length === 0) {
-      this.timeLeftSec = Math.max(0, this.timeLeftSec - GameConfig.penalty.noMatchSwapTimeSec);
-      this.refreshUi(`未形成消除，时间 -${GameConfig.penalty.noMatchSwapTimeSec} 秒`);
-      this.finishTurn();
+      this.gridManager.swapCells(first, second);
+      await this.animateCellsToHome(first, second);
+      this.refreshUi("这一步不能消除，不能移动");
+      await this.finishTurn();
       return;
     }
 
     await this.resolveMatches(matchedPositions, specialSpawn);
-    this.finishTurn();
+    await this.finishTurn();
   }
 
   private async resolveMatches(
@@ -330,7 +422,6 @@ export class GameManager {
       this.uiPanel.playScoreFlyFromWorld(this.gridManager.getPositionsWorldCenter(removalPositions), addScore);
       this.applyLotteryReward(addScore, removalPositions);
       this.updateTaskProgress(removalResult);
-      this.maybeShowBonusScoreOffer(addScore, removalResult);
 
       if (pendingSpecial) {
         const cell = this.gridManager.getCell(pendingSpecial.position.row, pendingSpecial.position.col);
@@ -342,12 +433,29 @@ export class GameManager {
       }
 
       this.state = GameState.DROPING;
-      await this.dropManager.collapseAndRefill(this.gridManager, this.itemManager);
-
-      const analysis = this.matchCheck.findMatches(this.gridManager.gridData);
+      const analysis = await this.refillBoard();
       pending = analysis.allMatches;
       pendingSpecial = analysis.specialSpawn;
     }
+  }
+
+  private async refillBoardAndResolveCascades(): Promise<void> {
+    let analysis = await this.refillBoard();
+    while (analysis.allMatches.length > 0 && this.state !== GameState.LEVEL_END) {
+      await this.resolveMatches(analysis.allMatches, analysis.specialSpawn);
+      analysis = this.matchCheck.findMatches(this.gridManager.gridData);
+    }
+  }
+
+  private async refillBoard(): Promise<ReturnType<MatchCheck["findMatches"]>> {
+    if (GameConfig.debug.refillLogs) {
+      console.warn("[GameManager] refillBoard before", JSON.stringify(this.gridManager.getDebugBoardSummary()));
+    }
+    await this.dropManager.collapseAndRefill(this.gridManager, this.itemManager);
+    if (GameConfig.debug.refillLogs) {
+      console.warn("[GameManager] refillBoard after", JSON.stringify(this.gridManager.getDebugBoardSummary()));
+    }
+    return this.matchCheck.findMatches(this.gridManager.gridData);
   }
 
   private async removeCells(positions: Position[]): Promise<RemovalResult> {
@@ -374,6 +482,10 @@ export class GameManager {
       this.gridManager.setCell(position.row, position.col, null, SpecialType.None, "", BlockState.Normal);
     });
 
+    if (total > 0) {
+      this.soundManager.playClear(this.chainStep);
+    }
+
     await Promise.all(tasks);
     return {
       score: removedScore,
@@ -396,9 +508,7 @@ export class GameManager {
     addScore += (chainStep - 1) * GameConfig.score.chainBonus;
 
     this.score += addScore;
-    this.timeLeftSec += GameConfig.reward.matchTimeSec;
-    const timeText = `时间 +${GameConfig.reward.matchTimeSec} 秒`;
-    this.refreshUi(chainStep > 1 ? `连锁 x${chainStep} +${addScore}，${timeText}` : `消除 +${addScore}，${timeText}`);
+    this.refreshUi(chainStep > 1 ? `连锁 x${chainStep} +${addScore}` : `消除 +${addScore}`);
     return addScore;
   }
 
@@ -445,10 +555,6 @@ export class GameManager {
       this.uiPanel.playScoreFlyFromWorld(this.gridManager.getPositionsWorldCenter(sourcePositions), reward.scoreBonus);
     }
 
-    if (reward.timeBonusSec && reward.timeBonusSec > 0) {
-      this.timeLeftSec += reward.timeBonusSec;
-    }
-
     this.refreshUi(reward.isBigWin ? `抽中大奖！${reward.detail}` : `开奖：${reward.detail}`);
   }
 
@@ -484,16 +590,6 @@ export class GameManager {
     }
 
     this.lotteryPity += 1;
-    if (roll < jackpotChance + doubleChance + GameConfig.lottery.timeChance) {
-      const timeBonusSec = this.randomInt(GameConfig.lottery.timeMinSec, GameConfig.lottery.timeMaxSec);
-      return {
-        title: "幸运加时",
-        detail: `挑战时间 +${timeBonusSec} 秒`,
-        rarity: "rare",
-        timeBonusSec,
-      };
-    }
-
     return null;
   }
 
@@ -557,35 +653,67 @@ export class GameManager {
     return SpecialType.None;
   }
 
-  private finishTurn(): void {
+  private async finishTurn(): Promise<void> {
     if (this.timeLeftSec <= 0) {
       this.endLevel();
       return;
     }
 
+    if (await this.repairBoardIfNeeded()) {
+      if (this.timeLeftSec <= 0 || this.isLevelEnded()) {
+        this.endLevel();
+        return;
+      }
+    }
+
     this.state = GameState.WAIT_INPUT;
-    this.refreshUi("继续交换任意两个方块");
-    this.presentBonusScoreOffer();
+    if (!this.hasAvailableMove()) {
+      this.presentDeadlockShuffleOffer();
+      return;
+    }
+
+    this.refreshUi("继续移动或消除方块");
   }
 
-  private endLevel(): void {
+  private async repairBoardIfNeeded(): Promise<boolean> {
+    if (GameConfig.debug.refillLogs) {
+      console.warn("[GameManager] repair check before", JSON.stringify(this.gridManager.getDebugBoardSummary()));
+    }
+    this.gridManager.compactGridStateFromNodes();
+    this.gridManager.normalizeCellNodeRefs();
+    this.gridManager.restoreItemVisualsFromGrid();
+    if (GameConfig.debug.refillLogs) {
+      console.warn("[GameManager] repair check after normalize", JSON.stringify(this.gridManager.getDebugBoardSummary()));
+    }
+    if (this.gridManager.countFilledCells() >= GameConfig.board.rows * GameConfig.board.cols) {
+      return false;
+    }
+
+    this.state = GameState.DROPING;
+    await this.refillBoardAndResolveCascades();
+    this.gridManager.restoreItemVisualsFromGrid();
+    if (GameConfig.debug.refillLogs) {
+      console.warn("[GameManager] repair finished", JSON.stringify(this.gridManager.getDebugBoardSummary()));
+    }
+    return true;
+  }
+
+  private endLevel(description = "3分钟挑战结束，继续刷新你的最高分。"): void {
     this.clearCountdownTimer();
     this.clearHintVisuals();
     this.clearBonusScoreOffer();
     this.state = GameState.LEVEL_END;
+    void this.leaderboardService.submitScore(this.score).then(() => {
+      this.onLeaderboardScoreSubmitted?.();
+    });
 
     this.resultPanel.show({
       title: "挑战结束",
-      description: this.hasUsedExtraTimeAd
-        ? "挑战计时结束，继续刷新你的最高分。"
-        : "挑战计时结束，看广告可追加 30 秒继续冲分。",
+      description,
       scoreText: `本局总分 ${this.score}`,
       actionText: "再来一局",
-      secondaryActionText: this.hasUsedExtraTimeAd
-        ? undefined
-        : `看广告 +${GameConfig.powerup.extraTimeSec}秒`,
     });
-    this.statusCallback("计时结束");
+    this.statusCallback("挑战结束");
   }
 
   private watchRewardedAd(adUnitId: string): Promise<boolean> {
@@ -623,95 +751,31 @@ export class GameManager {
     });
   }
 
-  private async triggerScreenClearPrize(): Promise<void> {
-    const positions = this.getAllFilledPositions();
-    if (positions.length === 0) {
-      this.state = GameState.WAIT_INPUT;
-      this.refreshUi("超级大奖已触发");
+  private presentDeadlockShuffleOffer(): void {
+    if (this.hasPendingShuffleAd || this.state === GameState.LEVEL_END) {
       return;
     }
 
-    this.selectedCell = null;
-    this.gridManager.clearSelection();
-    this.clearHintVisuals();
-    this.state = GameState.MATCHING;
-
-    const removalResult = await this.removeCells(positions);
-    const prizeScore = this.applyScore(removalResult.score, removalResult.total, SpecialType.None, 1);
-    this.gridManager.showFloatingScore(positions, prizeScore);
-    this.uiPanel.playScoreFlyFromWorld(this.gridManager.getPositionsWorldCenter(positions), prizeScore);
-    this.updateTaskProgress(removalResult);
-
-    this.state = GameState.DROPING;
-    await this.dropManager.collapseAndRefill(this.gridManager, this.itemManager);
-
-    const analysis = this.matchCheck.findMatches(this.gridManager.gridData);
-    if (analysis.allMatches.length > 0) {
-      this.chainStep = 0;
-      await this.resolveMatches(analysis.allMatches, analysis.specialSpawn);
-    }
-
-    if (!this.isLevelEnded()) {
-      this.state = GameState.WAIT_INPUT;
-      this.refreshUi("超级大奖清除全屏");
-    }
-  }
-
-  private getAllFilledPositions(): Position[] {
-    const positions: Position[] = [];
-    for (let row = 0; row < GameConfig.board.rows; row += 1) {
-      for (let col = 0; col < GameConfig.board.cols; col += 1) {
-        const cell = this.gridManager.getCell(row, col);
-        if (cell?.itemType) {
-          positions.push({ row, col });
-        }
-      }
-    }
-    return positions;
-  }
-
-  private maybeShowBonusScoreOffer(addScore: number, removalResult: RemovalResult): void {
-    void addScore;
-    if (
-      this.state === GameState.LEVEL_END ||
-      this.isWatchingBonusAd ||
-      this.hasPendingScreenClearAd ||
-      this.bonusAdShownCount >= GameConfig.bonusAd.maxPerGame
-    ) {
-      return;
-    }
-
-    const now = Date.now();
-    const hasHighValueItem = ITEM_TYPES.some((itemType) => {
-      return (removalResult.itemCounts[itemType] ?? 0) > 0 &&
-        ITEM_SCORE_MAP[itemType] >= GameConfig.bonusAd.minItemScore;
-    });
-    if (!hasHighValueItem || now - this.lastBonusOfferAtMs < GameConfig.bonusAd.cooldownSec * 1000) {
-      return;
-    }
-
-    this.lastBonusOfferAtMs = now;
-    this.hasPendingScreenClearAd = true;
-    this.bonusAdShownCount += 1;
-  }
-
-  private presentBonusScoreOffer(): void {
-    if (!this.hasPendingScreenClearAd || this.state === GameState.LEVEL_END) {
-      return;
-    }
-
+    this.hasPendingShuffleAd = true;
+    this.refreshUi("没有可消除走法，棋盘进入死局");
     this.pauseCountdownTimer();
-    const remainingOfferCount = Math.max(1, GameConfig.bonusAd.maxPerGame - this.bonusAdShownCount + 1);
-    this.bonusPanel.show(remainingOfferCount);
+    this.bonusPanel.show();
   }
 
   private clearBonusScoreOffer(): void {
-    this.hasPendingScreenClearAd = false;
+    this.hasPendingShuffleAd = false;
     this.bonusPanel.hide();
   }
 
   private isLevelEnded(): boolean {
     return this.state === GameState.LEVEL_END;
+  }
+
+  private hasAvailableMove(): boolean {
+    return Boolean(
+      this.matchCheck.findHintSwap(this.gridManager.gridData) ||
+      this.matchCheck.findHintEmptyMove(this.gridManager.gridData),
+    );
   }
 
   private async animateSwap(first: Position, second: Position): Promise<void> {
@@ -727,6 +791,28 @@ export class GameManager {
     await Promise.all([
       TweenUtil.moveTo(firstNode, GameConfig.board.swapDuration, firstTarget),
       TweenUtil.moveTo(secondNode, GameConfig.board.swapDuration, secondTarget),
+    ]);
+  }
+
+  private async animateMoveToEmpty(first: Position, second: Position): Promise<void> {
+    const firstNode = this.gridManager.getNode(first.row, first.col);
+    if (!firstNode) {
+      return;
+    }
+
+    await TweenUtil.moveTo(firstNode, GameConfig.board.swapDuration, this.gridManager.cellToPosition(second.row, second.col));
+  }
+
+  private async animateCellsToHome(first: Position, second: Position): Promise<void> {
+    const firstNode = this.gridManager.getNode(first.row, first.col);
+    const secondNode = this.gridManager.getNode(second.row, second.col);
+    if (!firstNode || !secondNode) {
+      return;
+    }
+
+    await Promise.all([
+      TweenUtil.moveTo(firstNode, GameConfig.board.swapDuration, this.gridManager.cellToPosition(first.row, first.col)),
+      TweenUtil.moveTo(secondNode, GameConfig.board.swapDuration, this.gridManager.cellToPosition(second.row, second.col)),
     ]);
   }
 
@@ -757,7 +843,7 @@ export class GameManager {
         return;
       }
 
-      this.refreshUi("继续交换任意两个方块");
+      this.refreshUi("继续移动或消除方块");
     }, 1000);
   }
 

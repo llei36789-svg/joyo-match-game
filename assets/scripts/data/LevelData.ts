@@ -1,4 +1,5 @@
 import { Color } from "cc";
+import { GameConfig } from "../core/GameConfig";
 
 export enum ItemType {
   Red = "red",
@@ -65,7 +66,6 @@ export interface LevelConfig {
   name: string;
   durationSec: number;
   difficultyFactor: number;
-  expectedDurationSec: number;
 }
 
 export const ITEM_COLOR_MAP: Record<ItemType, Color> = {
@@ -124,16 +124,13 @@ const LEVEL_NAMES = [
   "Score Rush",
 ];
 
-const LEVEL_DURATION_SEC = 180;
-
 export const LEVELS: LevelConfig[] = LEVEL_NAMES.map((name, index) => {
   const difficultyFactor = Number(Math.pow(1.1, index).toFixed(2));
 
   return {
     id: index + 1,
     name: `Chapter ${index + 1} - ${name}`,
-    durationSec: LEVEL_DURATION_SEC,
+    durationSec: GameConfig.objective.durationSec,
     difficultyFactor,
-    expectedDurationSec: LEVEL_DURATION_SEC,
   };
 });

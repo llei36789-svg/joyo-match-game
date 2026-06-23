@@ -23,10 +23,13 @@ import { GameConfig } from "./core/GameConfig";
 import { GameManager } from "./core/GameManager";
 import { GridManager } from "./core/GridManager";
 import { ItemManager } from "./core/ItemManager";
-import { ITEM_SCORE_MAP, ItemType, LEVELS } from "./data/LevelData";
+import { LeaderboardService } from "./core/LeaderboardService";
+import { SoundManager } from "./core/SoundManager";
+import { ITEM_SCORE_MAP, ItemType, LEVELS, Position } from "./data/LevelData";
 import { PoolUtil } from "./util/PoolUtil";
 import { UIBonusPanel } from "./ui/UIBonusPanel";
 import { UIGamePanel } from "./ui/UIGamePanel";
+import { UILeaderboardPanel } from "./ui/UILeaderboardPanel";
 import { UILotteryPanel } from "./ui/UILotteryPanel";
 import { UIResultPanel } from "./ui/UIResultPanel";
 import { UITaskPanel } from "./ui/UITaskPanel";
@@ -63,12 +66,15 @@ interface LayoutMetrics {
 
 @ccclass("GameRoot")
 export class GameRoot extends Component {
+  private readonly leaderboardService = new LeaderboardService();
+  private soundManager: SoundManager | null = null;
   private gameManager: GameManager | null = null;
   private gridManager: GridManager | null = null;
   private boardNode: Node | null = null;
   private gamePanel: UIGamePanel | null = null;
   private taskPanel: UITaskPanel | null = null;
   private bonusPanel: UIBonusPanel | null = null;
+  private leaderboardPanel: UILeaderboardPanel | null = null;
   private lotteryPanel: UILotteryPanel | null = null;
   private resultPanel: UIResultPanel | null = null;
   private layout: LayoutMetrics | null = null;
@@ -140,6 +146,14 @@ export class GameRoot extends Component {
     this.bonusPanel = this.node.addComponent(UIBonusPanel);
     this.bonusPanel.buildLayout(this.createPanel.bind(this), this.createLabel.bind(this), this.createButton.bind(this));
 
+    this.leaderboardPanel = this.node.addComponent(UILeaderboardPanel);
+    this.leaderboardPanel.buildLayout(
+      this.leaderboardService,
+      this.createPanel.bind(this),
+      this.createLabel.bind(this),
+      this.createButton.bind(this),
+    );
+
     this.lotteryPanel = this.node.addComponent(UILotteryPanel);
     this.lotteryPanel.buildLayout(
       this.createPanel.bind(this),
@@ -152,13 +166,14 @@ export class GameRoot extends Component {
   }
 
   private bootstrapGame(): void {
-    if (!this.boardNode || !this.gamePanel || !this.taskPanel || !this.bonusPanel || !this.lotteryPanel || !this.resultPanel) {
+    if (!this.boardNode || !this.gamePanel || !this.taskPanel || !this.bonusPanel || !this.leaderboardPanel || !this.lotteryPanel || !this.resultPanel) {
       return;
     }
 
     const layout = this.layout ?? this.getLayoutMetrics();
     const poolUtil = new PoolUtil();
     const itemManager = new ItemManager(poolUtil);
+    this.soundManager = this.soundManager ?? new SoundManager(this.node);
 
     this.gridManager = new GridManager({
       boardNode: this.boardNode,
@@ -178,6 +193,11 @@ export class GameRoot extends Component {
       uiPanel: this.gamePanel,
       taskPanel: this.taskPanel,
       bonusPanel: this.bonusPanel,
+      leaderboardService: this.leaderboardService,
+      onLeaderboardScoreSubmitted: () => {
+        void this.leaderboardPanel?.refresh();
+      },
+      soundManager: this.soundManager,
       lotteryPanel: this.lotteryPanel,
       resultPanel: this.resultPanel,
       statusCallback: (_message) => undefined,
@@ -193,33 +213,46 @@ export class GameRoot extends Component {
   }
 
   private onBoardTouched(event: EventTouch): void {
-    if (!this.gameManager || !this.boardNode || !this.gridManager) {
+    if (!this.gameManager) {
       return;
+    }
+
+    const cell = this.getBoardCellFromTouch(event);
+    if (!cell) {
+      return;
+    }
+
+    void this.gameManager.handleCellTap(cell.row, cell.col);
+  }
+
+  private getBoardCellFromTouch(event: EventTouch): Position | null {
+    if (!this.boardNode) {
+      return null;
     }
 
     const location = event.getUILocation();
     const uiTransform = this.boardNode.getComponent(UITransform);
     if (!uiTransform) {
-      return;
+      return null;
     }
 
     const local = uiTransform.convertToNodeSpaceAR(new Vec3(location.x, location.y, 0));
     const boardSize = uiTransform.contentSize;
     const cellWidth = boardSize.width / GameConfig.board.cols;
     const cellHeight = boardSize.height / GameConfig.board.rows;
-    const column = Math.floor((local.x + boardSize.width / 2) / cellWidth);
-    const rowFromTop = Math.floor((boardSize.height / 2 - local.y) / cellHeight);
+    const col = Math.floor((local.x + boardSize.width / 2) / cellWidth);
+    const row = Math.floor((boardSize.height / 2 - local.y) / cellHeight);
 
     if (
-      rowFromTop < 0 ||
-      rowFromTop >= GameConfig.board.rows ||
-      column < 0 ||
-      column >= GameConfig.board.cols
+      row < 0 ||
+      row >= GameConfig.board.rows ||
+      col < 0 ||
+      col >= GameConfig.board.cols
     ) {
-      return;
+      return null;
     }
 
-    void this.gameManager.handleCellTap(rowFromTop, column);
+    return { row, col };
   }
 
   private setupRootTransform(): void {
@@ -345,9 +378,10 @@ export class GameRoot extends Component {
     const headerHeight = layout.headerSize.height;
     const titleAspect = 547 / 150;
     const titleImageHeight = Math.min(headerHeight * 0.82, 158);
-    const titleImageWidth = Math.min(headerWidth - 164, titleImageHeight * titleAspect);
+    const titleImageWidth = Math.min(headerWidth - 220, titleImageHeight * titleAspect);
 
-    this.createTitleImage(parent, new Vec3(-28, 2, 0), new Size(titleImageWidth, titleImageHeight));
+    this.createLeaderboardButton(parent, new Vec3(-headerWidth / 2 + 58, 6, 0));
+    this.createTitleImage(parent, new Vec3(0, 2, 0), new Size(titleImageWidth, titleImageHeight));
     this.createInstructionButton(parent, new Vec3(headerWidth / 2 - 58, 6, 0));
   }
 
@@ -388,6 +422,31 @@ export class GameRoot extends Component {
     label.string = "?";
     this.applyButtonPressEffect(button);
     button.on(NodeEventType.TOUCH_END, () => this.showInstructionPanel(), this);
+  }
+
+  private createLeaderboardButton(parent: Node, position: Vec3): void {
+    const button = this.createPanel(
+      "LeaderboardButton",
+      parent,
+      position,
+      new Size(84, 84),
+      new Color(36, 48, 100, 245),
+      new Color(122, 242, 255, 230),
+      42,
+      4,
+    );
+    const label = this.createLabel(
+      "LeaderboardButtonLabel",
+      button,
+      Vec3.ZERO,
+      new Size(62, 62),
+      38,
+      new Color(214, 248, 255, 255),
+      true,
+    );
+    label.string = "榜";
+    this.applyButtonPressEffect(button);
+    button.on(NodeEventType.TOUCH_END, () => this.showLeaderboardPanel(), this);
   }
 
   private createInstructionPanel(): void {
@@ -441,13 +500,14 @@ export class GameRoot extends Component {
     desc.horizontalAlign = Label.HorizontalAlign.LEFT;
     desc.lineHeight = 44;
     desc.string = [
-      "3 分钟内尽量获得更高总分。",
-      "任意交换两个方块，3 个以上相同图标会消除。",
-      "消除成功 +1 秒，没有消除 -2 秒。",
-      "完成任务会自动领奖，并刷新下一个任务。",
-      "低分图标更常出现，高分图标更稀有。",
-      "开奖可能获得加时、翻倍或超级大奖。",
-      "50 分以上图标可能触发清屏广告。",
+      "每局限时3分钟，比拼最终消除总分。",
+      "点击方块，可移到相邻空格。",
+      "也可和能立即消除的相邻方块交换。",
+      "3 个以上相同图标连成一线会消除。",
+      "消除后会持续补充新方块。",
+      "完成任务会自动领奖并刷新任务。",
+      "开奖可获得得分翻倍或超级大奖。",
+      "出现死局时可看广告打乱棋盘。",
     ].join("\n");
 
     const scoreTitle = this.createLabel(
@@ -517,6 +577,10 @@ export class GameRoot extends Component {
     if (this.instructionPanel) {
       this.instructionPanel.active = false;
     }
+  }
+
+  private showLeaderboardPanel(): void {
+    this.leaderboardPanel?.show();
   }
 
   private swallowTouch(event: EventTouch): void {

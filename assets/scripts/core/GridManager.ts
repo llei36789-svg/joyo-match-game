@@ -15,11 +15,12 @@ interface GridManagerOptions {
   cols: number;
 }
 
+type GridPiece = Pick<GridCellData, "itemType" | "specialType" | "nodeUuid" | "blockState">;
+
 export class GridManager {
   readonly gridData: GridCellData[][] = [];
   private readonly backgroundCells: Node[] = [];
   private readonly matchCheck = new MatchCheck();
-  private selectedCell: Position | null = null;
   private selectedFrame: Node | null = null;
   private hintArrow: Node | null = null;
 
@@ -28,11 +29,11 @@ export class GridManager {
     this.buildBackgroundCells();
   }
 
-  initializeGrid(): void {
+  initializeGrid(initialBlockCount = this.options.rows * this.options.cols): void {
     let attempts = 0;
     do {
       this.clearGrid();
-      this.buildPlayableGrid();
+      this.buildPlayableGrid(initialBlockCount);
       attempts += 1;
     } while (!this.matchCheck.findHintSwap(this.gridData) && attempts < 30);
 
@@ -54,6 +55,113 @@ export class GridManager {
       return null;
     }
     return this.options.boardNode.children.find((child) => child.uuid === cell.nodeUuid) ?? null;
+  }
+
+  getDebugCellInfo(row: number, col: number): object {
+    const cell = this.gridData[row]?.[col];
+    const node = cell?.nodeUuid ? this.options.boardNode.children.find((child) => child.uuid === cell.nodeUuid) ?? null : null;
+    const body = node?.getChildByName("ItemBody") ?? null;
+    const opacity = node?.getComponent(UIOpacity) ?? null;
+    const bodyOpacity = body?.getComponent(UIOpacity) ?? null;
+    const expected = this.cellToPosition(row, col);
+
+    return {
+      row,
+      col,
+      itemType: cell?.itemType ?? null,
+      specialType: cell?.specialType ?? null,
+      nodeUuid: cell?.nodeUuid ? cell.nodeUuid.slice(-8) : "",
+      hasNode: Boolean(node),
+      nodeActive: node?.active ?? null,
+      nodeParent: node?.parent?.name ?? null,
+      nodeSibling: node?.getSiblingIndex() ?? null,
+      nodeOpacity: opacity?.opacity ?? null,
+      nodeScale: node ? `${node.scale.x.toFixed(2)},${node.scale.y.toFixed(2)}` : null,
+      nodePos: node ? `${node.position.x.toFixed(1)},${node.position.y.toFixed(1)}` : null,
+      expectedPos: `${expected.x.toFixed(1)},${expected.y.toFixed(1)}`,
+      posDelta: node
+        ? `${(node.position.x - expected.x).toFixed(1)},${(node.position.y - expected.y).toFixed(1)}`
+        : null,
+      bodyActive: body?.active ?? null,
+      bodyOpacity: bodyOpacity?.opacity ?? null,
+      childNames: node?.children.map((child) => `${child.name}:${child.active ? "on" : "off"}`).join("|") ?? "",
+    };
+  }
+
+  getDebugBoardSummary(): object {
+    const problems: object[] = [];
+    let filledCells = 0;
+    let cellsWithNode = 0;
+    let visibleNodes = 0;
+    let missingNodes = 0;
+    let hiddenNodes = 0;
+    let transparentNodes = 0;
+    let misplacedNodes = 0;
+
+    for (let row = 0; row < this.options.rows; row += 1) {
+      for (let col = 0; col < this.options.cols; col += 1) {
+        const cell = this.gridData[row]?.[col];
+        if (!cell?.itemType) {
+          continue;
+        }
+
+        filledCells += 1;
+        const node = this.getNode(row, col);
+        if (!node) {
+          missingNodes += 1;
+          problems.push({ row, col, reason: "missing-node", itemType: cell.itemType, nodeUuid: cell.nodeUuid.slice(-8) });
+          continue;
+        }
+
+        cellsWithNode += 1;
+        const opacity = node.getComponent(UIOpacity);
+        const isTransparent = Boolean(opacity && opacity.opacity <= 5);
+        const expected = this.cellToPosition(row, col);
+        const dx = node.position.x - expected.x;
+        const dy = node.position.y - expected.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const isMisplaced = distance > Math.min(this.options.cellWidth, this.options.cellHeight) * 0.35;
+        if (!node.active) {
+          hiddenNodes += 1;
+        }
+        if (isTransparent) {
+          transparentNodes += 1;
+        }
+        if (isMisplaced) {
+          misplacedNodes += 1;
+        }
+        if (node.active && !isTransparent) {
+          visibleNodes += 1;
+        }
+        if (!node.active || isTransparent || isMisplaced) {
+          problems.push({
+            row,
+            col,
+            reason: !node.active ? "inactive" : isTransparent ? "transparent" : "misplaced",
+            itemType: cell.itemType,
+            nodeUuid: cell.nodeUuid.slice(-8),
+            sibling: node.getSiblingIndex(),
+            opacity: opacity?.opacity ?? null,
+            pos: `${node.position.x.toFixed(1)},${node.position.y.toFixed(1)}`,
+            expected: `${expected.x.toFixed(1)},${expected.y.toFixed(1)}`,
+          });
+        }
+      }
+    }
+
+    const boardItemChildren = this.options.boardNode.children.filter((child) => child.name === "MatchItem").length;
+    return {
+      filledCells,
+      cellsWithNode,
+      visibleNodes,
+      boardItemChildren,
+      totalBoardChildren: this.options.boardNode.children.length,
+      missingNodes,
+      hiddenNodes,
+      transparentNodes,
+      misplacedNodes,
+      firstProblems: problems.slice(0, 12),
+    };
   }
 
   playCellTapEffect(row: number, col: number): void {
@@ -144,6 +252,145 @@ export class GridManager {
     return this.options.tileSize;
   }
 
+  countFilledCells(): number {
+    let total = 0;
+    for (let row = 0; row < this.options.rows; row += 1) {
+      for (let col = 0; col < this.options.cols; col += 1) {
+        if (this.gridData[row]?.[col]?.itemType) {
+          total += 1;
+        }
+      }
+    }
+    return total;
+  }
+
+  normalizeCellNodeRefs(): void {
+    const cellsByUuid = new Map<string, Array<{ cell: GridCellData; position: Position }>>();
+
+    for (let row = 0; row < this.options.rows; row += 1) {
+      for (let col = 0; col < this.options.cols; col += 1) {
+        const cell = this.gridData[row]?.[col];
+        if (!cell?.itemType || !cell.nodeUuid) {
+          this.setCell(row, col, null, SpecialType.None, "", BlockState.Normal);
+          continue;
+        }
+
+        if (!this.getBoardItemNodeByUuid(cell.nodeUuid)) {
+          this.setCell(row, col, null, SpecialType.None, "", BlockState.Normal);
+          continue;
+        }
+
+        const entries = cellsByUuid.get(cell.nodeUuid) ?? [];
+        entries.push({ cell: { ...cell }, position: { row, col } });
+        cellsByUuid.set(cell.nodeUuid, entries);
+      }
+    }
+
+    cellsByUuid.forEach((entries, nodeUuid) => {
+      if (entries.length <= 1) {
+        return;
+      }
+
+      const node = this.getBoardItemNodeByUuid(nodeUuid);
+      if (!node) {
+        return;
+      }
+
+      const best = entries.reduce((currentBest, entry) => {
+        return this.getNodeDistanceToCell(node, entry.position) < this.getNodeDistanceToCell(node, currentBest.position)
+          ? entry
+          : currentBest;
+      }, entries[0]);
+
+      entries.forEach((entry) => {
+        if (entry.position.row === best.position.row && entry.position.col === best.position.col) {
+          return;
+        }
+        this.setCell(entry.position.row, entry.position.col, null, SpecialType.None, "", BlockState.Normal);
+      });
+    });
+  }
+
+  compactGridStateFromNodes(): void {
+    const activeCells: GridCellData[] = [];
+    for (let row = 0; row < this.options.rows; row += 1) {
+      for (let col = 0; col < this.options.cols; col += 1) {
+        const cell = this.gridData[row]?.[col];
+        if (!cell?.itemType || !cell.nodeUuid || !this.getBoardItemNodeByUuid(cell.nodeUuid)) {
+          continue;
+        }
+        activeCells.push({ ...cell });
+      }
+    }
+
+    this.clearAllCellData();
+
+    activeCells.forEach((cell) => {
+      const node = this.getBoardItemNodeByUuid(cell.nodeUuid);
+      if (!node) {
+        return;
+      }
+      const position = this.positionToNearestCell(node.position);
+      const current = this.gridData[position.row]?.[position.col];
+      if (current?.itemType) {
+        return;
+      }
+      this.setCell(position.row, position.col, cell.itemType, cell.specialType, cell.nodeUuid, cell.blockState);
+    });
+  }
+
+  restoreItemVisualsFromGrid(): void {
+    const usedNodeUuids = new Set<string>();
+    for (let row = 0; row < this.options.rows; row += 1) {
+      for (let col = 0; col < this.options.cols; col += 1) {
+        const cell = this.gridData[row]?.[col];
+        if (!cell?.itemType || !cell.nodeUuid || usedNodeUuids.has(cell.nodeUuid)) {
+          this.setCell(row, col, null, SpecialType.None, "", BlockState.Normal);
+          continue;
+        }
+
+        const node = this.getBoardItemNodeByUuid(cell.nodeUuid);
+        if (!node) {
+          this.setCell(row, col, null, SpecialType.None, "", BlockState.Normal);
+          continue;
+        }
+
+        usedNodeUuids.add(cell.nodeUuid);
+        node.parent = this.options.boardNode;
+        node.active = true;
+        node.setPosition(this.cellToPosition(row, col));
+        node.setSiblingIndex(this.options.boardNode.children.length - 1);
+        this.options.itemManager.updateItemNode(node, cell.itemType, cell.specialType, this.options.tileSize);
+      }
+    }
+  }
+
+  private clearAllCellData(): void {
+    for (let row = 0; row < this.options.rows; row += 1) {
+      for (let col = 0; col < this.options.cols; col += 1) {
+        this.setCell(row, col, null, SpecialType.None, "", BlockState.Normal);
+      }
+    }
+  }
+
+  private getBoardItemNodeByUuid(nodeUuid: string): Node | null {
+    return this.options.boardNode.children.find((child) => child.uuid === nodeUuid && child.name === "MatchItem") ?? null;
+  }
+
+  private getNodeDistanceToCell(node: Node, position: Position): number {
+    const expected = this.cellToPosition(position.row, position.col);
+    return Math.pow(node.position.x - expected.x, 2) + Math.pow(node.position.y - expected.y, 2);
+  }
+
+  private positionToNearestCell(position: Vec3): Position {
+    const rawCol = Math.round((position.x + this.options.boardWidth / 2 - this.options.cellWidth / 2) / this.options.cellWidth);
+    const rawRow = Math.round((this.options.boardHeight / 2 - this.options.cellHeight / 2 - position.y) / this.options.cellHeight);
+    return {
+      row: Math.max(0, Math.min(this.options.rows - 1, rawRow)),
+      col: Math.max(0, Math.min(this.options.cols - 1, rawCol)),
+    };
+  }
+
   setCell(
     row: number,
     col: number,
@@ -170,23 +417,8 @@ export class GridManager {
     this.clearSelection();
     this.clearHintSwap();
 
-    const slots: Position[] = [];
-    const pieces: Array<Pick<GridCellData, "itemType" | "specialType" | "nodeUuid">> = [];
-    for (let row = 0; row < this.options.rows; row += 1) {
-      for (let col = 0; col < this.options.cols; col += 1) {
-        const cell = this.gridData[row]?.[col];
-        if (!cell?.itemType || !cell.nodeUuid) {
-          continue;
-        }
-        slots.push({ row, col });
-        pieces.push({
-          itemType: cell.itemType,
-          specialType: cell.specialType,
-          nodeUuid: cell.nodeUuid,
-        });
-      }
-    }
-
+    const slots = this.getFilledPositions();
+    const pieces = this.collectFilledPieces();
     if (pieces.length <= 1) {
       return;
     }
@@ -195,17 +427,17 @@ export class GridManager {
     for (let attempt = 0; attempt < 30; attempt += 1) {
       shuffled = this.shufflePieces(pieces);
       this.applyPiecesToSlots(slots, shuffled);
-      if (this.matchCheck.findMatches(this.gridData).allMatches.length === 0) {
+      if (this.matchCheck.findMatches(this.gridData).allMatches.length === 0 && this.hasResolvableMove()) {
         break;
       }
     }
 
-    if (!this.matchCheck.findHintSwap(this.gridData)) {
-      this.seedGuaranteedHint();
+    if (!this.hasResolvableMove()) {
+      this.forceGuaranteedResolvableMove();
     }
 
     await Promise.all(
-      slots.map((slot) => {
+      this.getFilledPositions().map((slot) => {
         const node = this.getNode(slot.row, slot.col);
         if (!node) {
           return Promise.resolve();
@@ -224,6 +456,127 @@ export class GridManager {
         });
       }),
     );
+  }
+
+  private getFilledPositions(): Position[] {
+    const positions: Position[] = [];
+    for (let row = 0; row < this.options.rows; row += 1) {
+      for (let col = 0; col < this.options.cols; col += 1) {
+        const cell = this.gridData[row]?.[col];
+        if (!cell?.itemType || !cell.nodeUuid) {
+          continue;
+        }
+        positions.push({ row, col });
+      }
+    }
+    return positions;
+  }
+
+  private collectFilledPieces(): GridPiece[] {
+    const pieces: GridPiece[] = [];
+    for (let row = 0; row < this.options.rows; row += 1) {
+      for (let col = 0; col < this.options.cols; col += 1) {
+        const cell = this.gridData[row]?.[col];
+        if (!cell?.itemType || !cell.nodeUuid) {
+          continue;
+        }
+        pieces.push({
+          itemType: cell.itemType,
+          specialType: cell.specialType,
+          nodeUuid: cell.nodeUuid,
+          blockState: cell.blockState,
+        });
+      }
+    }
+    return pieces;
+  }
+
+  private hasResolvableMove(): boolean {
+    return Boolean(this.matchCheck.findHintSwap(this.gridData) || this.matchCheck.findHintEmptyMove(this.gridData));
+  }
+
+  private forceGuaranteedResolvableMove(): boolean {
+    const pieces = this.collectFilledPieces();
+    if (pieces.length < 3 || this.options.cols < 4) {
+      return false;
+    }
+
+    const row = this.options.rows - 1;
+    const startCol = Math.max(0, Math.floor((this.options.cols - 4) / 2));
+    const reservedKeys = new Set([
+      `${row}-${startCol}`,
+      `${row}-${startCol + 1}`,
+      `${row}-${startCol + 2}`,
+      `${row}-${startCol + 3}`,
+    ]);
+    const itemType = pieces[0].itemType;
+    if (!itemType) {
+      return false;
+    }
+    const isFullBoard = pieces.length >= this.options.rows * this.options.cols;
+    const forcedPieceCount = isFullBoard ? 4 : 3;
+    if (pieces.length < forcedPieceCount) {
+      return false;
+    }
+
+    for (let clearRow = 0; clearRow < this.options.rows; clearRow += 1) {
+      for (let clearCol = 0; clearCol < this.options.cols; clearCol += 1) {
+        this.setCell(clearRow, clearCol, null, SpecialType.None, "", BlockState.Normal);
+      }
+    }
+
+    const secondaryType =
+      pieces.find((piece) => piece.itemType && piece.itemType !== itemType)?.itemType ?? this.getDifferentItemType(itemType);
+    const forcedLayout = isFullBoard
+      ? [
+        { position: { row, col: startCol }, itemType },
+        { position: { row, col: startCol + 1 }, itemType },
+        { position: { row, col: startCol + 2 }, itemType: secondaryType },
+        { position: { row, col: startCol + 3 }, itemType },
+      ]
+      : [
+        { position: { row, col: startCol }, itemType },
+        { position: { row, col: startCol + 1 }, itemType },
+        { position: { row, col: startCol + 3 }, itemType },
+      ];
+
+    pieces.slice(0, forcedPieceCount).forEach((piece, index) => {
+      const layout = forcedLayout[index];
+      this.setCell(layout.position.row, layout.position.col, layout.itemType, SpecialType.None, piece.nodeUuid, piece.blockState);
+      const node = this.getNode(layout.position.row, layout.position.col);
+      if (node) {
+        this.options.itemManager.updateItemNode(node, layout.itemType, SpecialType.None, this.options.tileSize);
+      }
+    });
+
+    const fillSlots: Position[] = [];
+    for (let fillRow = 0; fillRow < this.options.rows; fillRow += 1) {
+      if (fillRow === row) {
+        continue;
+      }
+      for (let fillCol = 0; fillCol < this.options.cols; fillCol += 1) {
+        fillSlots.push({ row: fillRow, col: fillCol });
+      }
+    }
+    for (let fillCol = 0; fillCol < this.options.cols; fillCol += 1) {
+      if (!reservedKeys.has(`${row}-${fillCol}`)) {
+        fillSlots.push({ row, col: fillCol });
+      }
+    }
+
+    pieces.slice(forcedPieceCount).forEach((piece, index) => {
+      const slot = fillSlots[index];
+      if (!slot || !piece.itemType) {
+        return;
+      }
+      this.setCell(slot.row, slot.col, piece.itemType, piece.specialType, piece.nodeUuid, piece.blockState);
+    });
+
+    return this.hasResolvableMove();
+  }
+
+  private getDifferentItemType(itemType: ItemType): ItemType {
+    return ITEM_TYPES.find((entry) => entry !== itemType) ?? itemType;
   }
 
   cellToPosition(row: number, col: number): Vec3 {
@@ -254,7 +607,6 @@ export class GridManager {
   }
 
   highlightCell(position: Position | null): void {
-    this.selectedCell = position;
     if (!this.selectedFrame) {
       return;
     }
@@ -266,10 +618,7 @@ export class GridManager {
 
     this.selectedFrame.active = true;
     this.selectedFrame.setPosition(this.cellToPosition(position.row, position.col));
-  }
-
-  getSelectedCell(): Position | null {
-    return this.selectedCell;
+    this.selectedFrame.setSiblingIndex(this.options.boardNode.children.length - 1);
   }
 
   clearSelection(): void {
@@ -399,13 +748,28 @@ export class GridManager {
     return itemType;
   }
 
-  private buildPlayableGrid(): void {
+  private buildPlayableGrid(initialBlockCount: number): void {
+    const safeBlockCount = Math.max(0, Math.min(initialBlockCount, this.options.rows * this.options.cols));
     for (let row = 0; row < this.options.rows; row += 1) {
       this.gridData[row] = [];
       for (let col = 0; col < this.options.cols; col += 1) {
+        const index = row * this.options.cols + col;
+        if (index >= safeBlockCount) {
+          this.gridData[row][col] = {
+            row,
+            col,
+            itemType: null,
+            specialType: SpecialType.None,
+            blockState: BlockState.Normal,
+            nodeUuid: "",
+          };
+          continue;
+        }
+
         const itemType = this.createInitialItemType(row, col);
         const node = this.options.itemManager.createItemNode(itemType, SpecialType.None, this.options.tileSize);
         node.parent = this.options.boardNode;
+        node.setSiblingIndex(this.options.boardNode.children.length - 1);
         node.setPosition(this.cellToPosition(row, col));
         this.gridData[row][col] = {
           row,
@@ -420,14 +784,37 @@ export class GridManager {
   }
 
   private seedGuaranteedHint(): void {
+    const candidates: Array<{ row: number; startCol: number }> = [];
+    for (let row = 0; row < this.options.rows; row += 1) {
+      let startCol = 0;
+      while (startCol < this.options.cols) {
+        while (startCol < this.options.cols && !this.gridData[row]?.[startCol]?.itemType) {
+          startCol += 1;
+        }
+        let endCol = startCol;
+        while (endCol < this.options.cols && this.gridData[row]?.[endCol]?.itemType) {
+          endCol += 1;
+        }
+        for (let col = startCol; col <= endCol - 5; col += 1) {
+          candidates.push({ row, startCol: col });
+        }
+        startCol = endCol + 1;
+      }
+    }
+
+    if (candidates.length === 0) {
+      return;
+    }
+
     const primary = this.getRandomItemType();
     let secondary = this.getRandomItemType();
     while (secondary === primary && ITEM_TYPES.length > 1) {
       secondary = this.getRandomItemType();
     }
     const seeded = [primary, secondary, primary, primary, secondary];
-    const row = Math.floor(Math.random() * this.options.rows);
-    const startCol = Math.floor(Math.random() * Math.max(1, this.options.cols - seeded.length + 1));
+    const candidate = candidates[Math.floor(Math.random() * candidates.length)];
+    const row = candidate.row;
+    const startCol = candidate.startCol;
 
     seeded.forEach((itemType, index) => {
       const col = startCol + index;
@@ -523,21 +910,36 @@ export class GridManager {
     this.selectedFrame.layer = Layers.Enum.UI_2D;
     this.selectedFrame.parent = this.options.boardNode;
     this.selectedFrame.active = false;
+    this.selectedFrame.scale = Vec3.ONE.clone();
 
+    const width = Math.max(this.options.cellWidth - 8, 1);
+    const height = Math.max(this.options.cellHeight - 8, 1);
     const transform = this.selectedFrame.addComponent(UITransform);
-    transform.setContentSize(new Size(this.options.cellWidth, this.options.cellHeight));
+    transform.setContentSize(new Size(width, height));
+
+    const opacity = this.selectedFrame.addComponent(UIOpacity);
+    opacity.opacity = 235;
 
     const graphics = this.selectedFrame.addComponent(Graphics);
-    graphics.strokeColor = new Color(255, 246, 121, 255);
-    graphics.lineWidth = 5;
-    graphics.roundRect(
-      -this.options.cellWidth / 2,
-      -this.options.cellHeight / 2,
-      this.options.cellWidth,
-      this.options.cellHeight,
-      18,
-    );
+    graphics.strokeColor = new Color(255, 246, 138, 255);
+    graphics.lineWidth = Math.max(5, Math.min(width, height) * 0.08);
+    graphics.roundRect(-width / 2, -height / 2, width, height, 18);
     graphics.stroke();
+
+    tween(this.selectedFrame)
+      .repeatForever(
+        tween<Node>()
+          .to(0.48, { scale: new Vec3(1.08, 1.08, 1) })
+          .to(0.48, { scale: Vec3.ONE.clone() }),
+      )
+      .start();
+    tween(opacity)
+      .repeatForever(
+        tween<UIOpacity>()
+          .to(0.48, { opacity: 255 })
+          .to(0.48, { opacity: 178 }),
+      )
+      .start();
   }
 
   private createHintArrow(dx: number, dy: number): Node {

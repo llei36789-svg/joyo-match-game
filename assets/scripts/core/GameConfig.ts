@@ -20,30 +20,27 @@ export const GameConfig = {
     chainBonus: 30,
     specialMultiplier: 1.4,
   },
-  penalty: {
-    noMatchSwapTimeSec: 2,
-  },
-  reward: {
-    matchTimeSec: 1,
+  objective: {
+    durationSec: 180,
   },
   lottery: {
-    timeMinSec: 1,
-    timeMaxSec: 3,
     doubleBaseChance: 0.04,
     jackpotBaseChance: 0.01,
-    timeChance: 0.15,
     pityChanceStep: 0.006,
     maxPityChanceBonus: 0.08,
     jackpotScore: 888,
   },
-  powerup: {
-    extraTimeSec: 30,
-    adUnitId: "adunit-extra-time-placeholder",
-  },
   bonusAd: {
-    minItemScore: 50,
-    cooldownSec: 18,
-    maxPerGame: 2,
     adUnitId: "adunit-score-bonus-placeholder",
+  },
+  leaderboard: {
+    serverBaseUrl: "",
+    playerId: "local-player",
+    nickname: "我",
+    pageSize: 20,
+    autoRefreshSec: 30,
+  },
+  debug: {
+    refillLogs: true,
   },
 };

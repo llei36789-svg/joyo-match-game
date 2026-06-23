@@ -281,24 +281,29 @@ export class ItemManager {
     const opacity = node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity);
     opacity.opacity = 255;
 
-    const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
-    const label = node.getChildByName("Symbol") ?? this.createSymbolNode(node, visualSize);
-    const brandLabelNode = node.getChildByName("BrandMark") ?? this.createBrandMarkNode(node, visualSize);
-    const fxNode = node.getChildByName("SpecialFx") ?? this.createSpecialFxNode(node, visualSize);
+    const rootGraphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
+    rootGraphics.clear();
+    const bodyNode = this.getBodyNode(node, visualSize);
+    const graphics = bodyNode.getComponent(Graphics) ?? bodyNode.addComponent(Graphics);
+    const label = this.getOrMoveChild(node, bodyNode, "Symbol", () => this.createSymbolNode(bodyNode, visualSize));
+    const brandLabelNode = this.getOrMoveChild(node, bodyNode, "BrandMark", () => this.createBrandMarkNode(bodyNode, visualSize));
+    const fxNode = this.getOrMoveChild(node, bodyNode, "SpecialFx", () => this.createSpecialFxNode(bodyNode, visualSize));
     this.resizeChild(label, visualSize - 10, visualSize - 10);
     this.resizeChild(brandLabelNode, visualSize - 12, visualSize - 12);
     const symbolLabel = label.getComponent(Label)!;
     const brandLabel = brandLabelNode.getComponent(Label)!;
 
+    this.drawItem(rootGraphics, itemType, specialType, visualSize);
     this.drawItem(graphics, itemType, specialType, visualSize);
     this.updateBrandMark(brandLabel, itemType, visualSize);
     this.hideScoreMark(node);
     this.updateSpecialFx(fxNode, specialType, visualSize);
-    brandLabelNode.setSiblingIndex(Math.max(0, node.children.length - 3));
-    fxNode.setSiblingIndex(Math.max(0, node.children.length - 2));
-    label.setSiblingIndex(Math.max(0, node.children.length - 1));
+    brandLabelNode.setSiblingIndex(Math.max(0, bodyNode.children.length - 3));
+    fxNode.setSiblingIndex(Math.max(0, bodyNode.children.length - 2));
+    label.setSiblingIndex(Math.max(0, bodyNode.children.length - 1));
     symbolLabel.string = this.getSpecialSymbol(specialType);
     symbolLabel.color = specialType === SpecialType.None ? new Color(0, 0, 0, 0) : new Color(255, 255, 255, 240);
+    this.playBreath(bodyNode);
     return node;
   }
 
@@ -306,25 +311,29 @@ export class ItemManager {
     const visualSize = this.getCrispVisualSize(size);
     const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
     transform.setContentSize(new Size(visualSize, visualSize));
-    const graphics = node.getComponent(Graphics)!;
-    const labelNode = node.getChildByName("Symbol");
+    const rootGraphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
+    rootGraphics.clear();
+    const bodyNode = this.getBodyNode(node, visualSize);
+    const graphics = bodyNode.getComponent(Graphics) ?? bodyNode.addComponent(Graphics);
+    const labelNode = this.getOrMoveChild(node, bodyNode, "Symbol", () => this.createSymbolNode(bodyNode, visualSize));
     const label = labelNode?.getComponent(Label);
-    const brandLabelNode = node.getChildByName("BrandMark") ?? this.createBrandMarkNode(node, visualSize);
+    const brandLabelNode = this.getOrMoveChild(node, bodyNode, "BrandMark", () => this.createBrandMarkNode(bodyNode, visualSize));
     const brandLabel = brandLabelNode.getComponent(Label);
-    const fxNode = node.getChildByName("SpecialFx") ?? this.createSpecialFxNode(node, visualSize);
+    const fxNode = this.getOrMoveChild(node, bodyNode, "SpecialFx", () => this.createSpecialFxNode(bodyNode, visualSize));
     if (labelNode) {
       this.resizeChild(labelNode, visualSize - 10, visualSize - 10);
     }
     this.resizeChild(brandLabelNode, visualSize - 12, visualSize - 12);
+    this.drawItem(rootGraphics, itemType, specialType, visualSize);
     this.drawItem(graphics, itemType, specialType, visualSize);
     if (brandLabel) {
       this.updateBrandMark(brandLabel, itemType, visualSize);
     }
     this.hideScoreMark(node);
     this.updateSpecialFx(fxNode, specialType, visualSize);
-    node.getChildByName("BrandMark")?.setSiblingIndex(Math.max(0, node.children.length - 3));
-    fxNode.setSiblingIndex(Math.max(0, node.children.length - 2));
-    node.getChildByName("Symbol")?.setSiblingIndex(Math.max(0, node.children.length - 1));
+    brandLabelNode.setSiblingIndex(Math.max(0, bodyNode.children.length - 3));
+    fxNode.setSiblingIndex(Math.max(0, bodyNode.children.length - 2));
+    bodyNode.getChildByName("Symbol")?.setSiblingIndex(Math.max(0, bodyNode.children.length - 1));
     if (label) {
       label.string = this.getSpecialSymbol(specialType);
       label.color = specialType === SpecialType.None ? new Color(0, 0, 0, 0) : new Color(255, 255, 255, 240);
@@ -332,10 +341,47 @@ export class ItemManager {
     const opacity = node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity);
     opacity.opacity = 255;
     node.scale = Vec3.ONE.clone();
+    this.playBreath(bodyNode);
   }
 
   private getCrispVisualSize(size: number): number {
     return Math.max(24, Math.round(size * 0.98));
+  }
+
+  private getBodyNode(parent: Node, size: number): Node {
+    const node = parent.getChildByName("ItemBody") ?? new Node("ItemBody");
+    node.layer = Layers.Enum.UI_2D;
+    node.parent = parent;
+    node.setPosition(Vec3.ZERO);
+
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    transform.setContentSize(new Size(size, size));
+    node.getComponent(Graphics) ?? node.addComponent(Graphics);
+    node.active = true;
+    return node;
+  }
+
+  private getOrMoveChild(parent: Node, bodyNode: Node, name: string, createNode: () => Node): Node {
+    const node = bodyNode.getChildByName(name) ?? parent.getChildByName(name) ?? createNode();
+    node.layer = Layers.Enum.UI_2D;
+    node.parent = bodyNode;
+    node.setPosition(Vec3.ZERO);
+    node.active = true;
+    return node;
+  }
+
+  private playBreath(node: Node): void {
+    Tween.stopAllByTarget(node);
+    node.scale = Vec3.ONE.clone();
+    const delay = 0.08 + Math.random() * 0.42;
+    tween(node)
+      .delay(delay)
+      .repeatForever(
+        tween<Node>()
+          .to(0.9, { scale: new Vec3(1.035, 1.035, 1) })
+          .to(0.9, { scale: new Vec3(0.985, 0.985, 1) }),
+      )
+      .start();
   }
 
   private resizeChild(node: Node, width: number, height: number): void {
@@ -344,7 +390,13 @@ export class ItemManager {
   }
 
   recycleItemNode(node: Node): void {
+    const bodyNode = node.getChildByName("ItemBody");
+    if (bodyNode) {
+      Tween.stopAllByTarget(bodyNode);
+      bodyNode.scale = Vec3.ONE.clone();
+    }
     this.resetSpecialFx(node.getChildByName("SpecialFx") ?? null);
+    this.resetSpecialFx(bodyNode?.getChildByName("SpecialFx") ?? null);
     this.poolUtil.putNode("match-item", node);
   }
 

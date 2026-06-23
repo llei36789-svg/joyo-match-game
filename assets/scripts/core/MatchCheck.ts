@@ -18,6 +18,10 @@ export class MatchCheck {
   findHintSwap(grid: GridCellData[][]): { first: Position; second: Position } | null {
     const rows = grid.length;
     const cols = grid[0]?.length ?? 0;
+    const directions = [
+      { row: 0, col: 1 },
+      { row: 1, col: 0 },
+    ];
 
     for (let row = 0; row < rows; row += 1) {
       for (let col = 0; col < cols; col += 1) {
@@ -26,21 +30,53 @@ export class MatchCheck {
           continue;
         }
 
-        for (let targetRow = row; targetRow < rows; targetRow += 1) {
-          for (let targetCol = 0; targetCol < cols; targetCol += 1) {
-            if (targetRow === row && targetCol <= col) {
-              continue;
-            }
-            const nextCell = grid[targetRow]?.[targetCol];
-            if (!nextCell?.itemType || nextCell.itemType === cell.itemType) {
-              continue;
-            }
+        for (const direction of directions) {
+          const targetRow = row + direction.row;
+          const targetCol = col + direction.col;
+          const nextCell = grid[targetRow]?.[targetCol];
+          if (!nextCell?.itemType || nextCell.itemType === cell.itemType) {
+            continue;
+          }
 
-            const first = { row, col };
-            const second = { row: targetRow, col: targetCol };
-            if (this.wouldSwapResolveImmediately(grid, first, second)) {
-              return { first, second };
-            }
+          const first = { row, col };
+          const second = { row: targetRow, col: targetCol };
+          if (this.wouldSwapResolveImmediately(grid, first, second)) {
+            return { first, second };
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  findHintEmptyMove(grid: GridCellData[][]): { first: Position; second: Position } | null {
+    const rows = grid.length;
+    const cols = grid[0]?.length ?? 0;
+    const directions = [
+      { row: 0, col: 1 },
+      { row: 1, col: 0 },
+      { row: 0, col: -1 },
+      { row: -1, col: 0 },
+    ];
+
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const cell = grid[row][col];
+        if (!cell?.itemType) {
+          continue;
+        }
+
+        for (const direction of directions) {
+          const second = { row: row + direction.row, col: col + direction.col };
+          const nextCell = grid[second.row]?.[second.col];
+          if (!nextCell || nextCell.itemType || nextCell.nodeUuid) {
+            continue;
+          }
+
+          const first = { row, col };
+          if (this.wouldMoveToEmptyResolveImmediately(grid, first, second)) {
+            return { first, second };
           }
         }
       }
@@ -335,7 +371,7 @@ export class MatchCheck {
     grid[second.row][second.col] = firstCell;
   }
 
-  private wouldSwapResolveImmediately(grid: GridCellData[][], first: Position, second: Position): boolean {
+  wouldSwapResolveImmediately(grid: GridCellData[][], first: Position, second: Position): boolean {
     const firstCell = grid[first.row][first.col];
     const secondCell = grid[second.row][second.col];
     if (!firstCell?.itemType || !secondCell?.itemType) {
@@ -358,6 +394,26 @@ export class MatchCheck {
       (position) =>
         (position.row === first.row && position.col === first.col) ||
         (position.row === second.row && position.col === second.col),
+    );
+  }
+
+  wouldMoveToEmptyResolveImmediately(grid: GridCellData[][], first: Position, second: Position): boolean {
+    const firstCell = grid[first.row][first.col];
+    const secondCell = grid[second.row]?.[second.col];
+    if (!firstCell?.itemType || !firstCell.nodeUuid || !secondCell || secondCell.itemType || secondCell.nodeUuid) {
+      return false;
+    }
+
+    this.swapTemp(grid, first, second);
+    const analysis = this.findMatches(grid, [second]);
+    this.swapTemp(grid, first, second);
+
+    if (analysis.allMatches.length === 0) {
+      return false;
+    }
+
+    return analysis.allMatches.some(
+      (position) => position.row === second.row && position.col === second.col,
     );
   }
 }

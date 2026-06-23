@@ -29,7 +29,7 @@ type BadgeFactory = (parent: Node, iconText: string, labelText: string, position
 @ccclass("UIGamePanel")
 export class UIGamePanel extends Component {
   private scoreValueLabel: Label | null = null;
-  private timeValueLabel: Label | null = null;
+  private timeLeftLabel: Label | null = null;
 
   buildLayout(topHudNode: Node, createPanel: PanelFactory, createLabel: LabelFactory, _createBadge: BadgeFactory): void {
     this.buildTopScoreHud(topHudNode, createPanel, createLabel);
@@ -47,8 +47,8 @@ export class UIGamePanel extends Component {
     if (this.scoreValueLabel) {
       this.scoreValueLabel.string = `${payload.score}`;
     }
-    if (this.timeValueLabel) {
-      this.timeValueLabel.string = `时间 ${this.formatTime(payload.timeLeftSec)}`;
+    if (this.timeLeftLabel) {
+      this.timeLeftLabel.string = `剩余时间 ${this.formatTime(payload.timeLeftSec)}`;
     }
   }
 
@@ -147,8 +147,8 @@ export class UIGamePanel extends Component {
       true,
     );
 
-    this.timeValueLabel = createLabel(
-      "TimeTop",
+    this.timeLeftLabel = createLabel(
+      "TimeLeftTop",
       hud,
       new Vec3(0, -hudSize.height * 0.31, 0),
       new Size(centerBlockWidth, 40),
@@ -158,11 +158,11 @@ export class UIGamePanel extends Component {
     );
   }
 
-  private formatTime(seconds: number): string {
-    const safeSeconds = Math.max(0, Math.ceil(seconds));
-    const minutes = Math.floor(safeSeconds / 60);
-    const remainder = safeSeconds % 60;
-    return `${minutes}:${remainder < 10 ? "0" : ""}${remainder}`;
+  private formatTime(totalSec: number): string {
+    const safeSec = Math.max(0, Math.floor(totalSec));
+    const minutes = Math.floor(safeSec / 60);
+    const seconds = safeSec % 60;
+    return `${minutes}:${seconds < 10 ? "0" : ""}${seconds}`;
   }
 
   private pulseScoreValue(): void {
