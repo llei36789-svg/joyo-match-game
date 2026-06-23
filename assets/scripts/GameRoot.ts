@@ -13,6 +13,7 @@ import {
   SpriteFrame,
   Tween,
   tween,
+  UIOpacity,
   UITransform,
   Vec3,
   EventTouch,
@@ -26,6 +27,7 @@ import { ITEM_SCORE_MAP, ItemType, LEVELS } from "./data/LevelData";
 import { PoolUtil } from "./util/PoolUtil";
 import { UIBonusPanel } from "./ui/UIBonusPanel";
 import { UIGamePanel } from "./ui/UIGamePanel";
+import { UILotteryPanel } from "./ui/UILotteryPanel";
 import { UIResultPanel } from "./ui/UIResultPanel";
 import { UITaskPanel } from "./ui/UITaskPanel";
 
@@ -54,9 +56,9 @@ interface LayoutMetrics {
   taskY: number;
   topHudSize: Size;
   topHudY: number;
-  boardFrameSize: number;
+  boardFrameSize: Size;
+  boardContentSize: Size;
   boardY: number;
-  boardScale: number;
 }
 
 @ccclass("GameRoot")
@@ -67,6 +69,7 @@ export class GameRoot extends Component {
   private gamePanel: UIGamePanel | null = null;
   private taskPanel: UITaskPanel | null = null;
   private bonusPanel: UIBonusPanel | null = null;
+  private lotteryPanel: UILotteryPanel | null = null;
   private resultPanel: UIResultPanel | null = null;
   private layout: LayoutMetrics | null = null;
   private instructionPanel: Node | null = null;
@@ -96,26 +99,29 @@ export class GameRoot extends Component {
     const taskNode = this.createNode("TaskHud", this.node, new Vec3(0, layout.taskY, 0), layout.taskSize);
     const topHudNode = this.createNode("TopHud", this.node, new Vec3(0, layout.topHudY, 0), layout.topHudSize);
 
-    this.createGlow(this.node, new Vec3(0, layout.boardY, 0), layout.boardFrameSize * 0.48, new Color(113, 152, 255, 26));
+    this.createGlow(this.node, new Vec3(0, layout.boardY, 0), Math.min(layout.boardFrameSize.width, layout.boardFrameSize.height) * 0.48, new Color(113, 152, 255, 26));
     const boardFrame = this.createPanel(
       "BoardFrame",
       this.node,
       new Vec3(0, layout.boardY, 0),
-      new Size(layout.boardFrameSize, layout.boardFrameSize),
+      layout.boardFrameSize,
       new Color(15, 21, 44, 245),
       new Color(146, 190, 255, 188),
       38,
       5,
     );
-    this.createBoardFrameDecor(boardFrame, layout.boardFrameSize, GameConfig.board.pixelSize * layout.boardScale);
+    this.createBoardFrameDecor(
+      boardFrame,
+      layout.boardFrameSize,
+      layout.boardContentSize,
+    );
 
     this.boardNode = this.createNode(
       "BoardNode",
       boardFrame,
       new Vec3(0, 0, 0),
-      new Size(GameConfig.board.pixelSize, GameConfig.board.pixelSize),
+      layout.boardContentSize,
     );
-    this.boardNode.setScale(new Vec3(layout.boardScale, layout.boardScale, 1));
     this.boardNode.on(NodeEventType.TOUCH_END, this.onBoardTouched, this);
 
     this.gamePanel = topHudNode.addComponent(UIGamePanel);
@@ -134,21 +140,34 @@ export class GameRoot extends Component {
     this.bonusPanel = this.node.addComponent(UIBonusPanel);
     this.bonusPanel.buildLayout(this.createPanel.bind(this), this.createLabel.bind(this), this.createButton.bind(this));
 
+    this.lotteryPanel = this.node.addComponent(UILotteryPanel);
+    this.lotteryPanel.buildLayout(
+      this.createPanel.bind(this),
+      this.createLabel.bind(this),
+      new Vec3(0, layout.boardY + layout.boardFrameSize.height * 0.29, 0),
+      new Size(Math.min(layout.contentWidth - 38, 660), 158),
+    );
+
     this.createInstructionPanel();
   }
 
   private bootstrapGame(): void {
-    if (!this.boardNode || !this.gamePanel || !this.taskPanel || !this.bonusPanel || !this.resultPanel) {
+    if (!this.boardNode || !this.gamePanel || !this.taskPanel || !this.bonusPanel || !this.lotteryPanel || !this.resultPanel) {
       return;
     }
 
+    const layout = this.layout ?? this.getLayoutMetrics();
     const poolUtil = new PoolUtil();
     const itemManager = new ItemManager(poolUtil);
 
     this.gridManager = new GridManager({
       boardNode: this.boardNode,
       itemManager,
-      tileSize: GameConfig.board.tileSize,
+      tileSize: Math.min(layout.boardContentSize.width / GameConfig.board.cols, layout.boardContentSize.height / GameConfig.board.rows),
+      cellWidth: layout.boardContentSize.width / GameConfig.board.cols,
+      cellHeight: layout.boardContentSize.height / GameConfig.board.rows,
+      boardWidth: layout.boardContentSize.width,
+      boardHeight: layout.boardContentSize.height,
       rows: GameConfig.board.rows,
       cols: GameConfig.board.cols,
     });
@@ -159,6 +178,7 @@ export class GameRoot extends Component {
       uiPanel: this.gamePanel,
       taskPanel: this.taskPanel,
       bonusPanel: this.bonusPanel,
+      lotteryPanel: this.lotteryPanel,
       resultPanel: this.resultPanel,
       statusCallback: (_message) => undefined,
     });
@@ -184,8 +204,11 @@ export class GameRoot extends Component {
     }
 
     const local = uiTransform.convertToNodeSpaceAR(new Vec3(location.x, location.y, 0));
-    const column = Math.floor((local.x + GameConfig.board.pixelSize / 2) / GameConfig.board.tileSize);
-    const rowFromTop = Math.floor((GameConfig.board.pixelSize / 2 - local.y) / GameConfig.board.tileSize);
+    const boardSize = uiTransform.contentSize;
+    const cellWidth = boardSize.width / GameConfig.board.cols;
+    const cellHeight = boardSize.height / GameConfig.board.rows;
+    const column = Math.floor((local.x + boardSize.width / 2) / cellWidth);
+    const rowFromTop = Math.floor((boardSize.height / 2 - local.y) / cellHeight);
 
     if (
       rowFromTop < 0 ||
@@ -216,7 +239,7 @@ export class GameRoot extends Component {
       new Size(layout.stageWidth, layout.stageHeight),
     );
     const graphics = background.addComponent(Graphics);
-    graphics.fillColor = new Color(7, 10, 24, 255);
+    graphics.fillColor = new Color(128, 209, 255, 255);
     graphics.rect(
       -layout.stageWidth / 2,
       -layout.stageHeight / 2,
@@ -225,32 +248,50 @@ export class GameRoot extends Component {
     );
     graphics.fill();
 
+    const bandHeight = layout.stageHeight / 4;
+    const bandColors = [
+      new Color(255, 183, 222, 118),
+      new Color(178, 238, 255, 138),
+      new Color(205, 196, 255, 126),
+      new Color(185, 247, 208, 108),
+    ];
+    bandColors.forEach((color, index) => {
+      graphics.fillColor = color;
+      graphics.rect(
+        -layout.stageWidth / 2,
+        layout.stageHeight / 2 - bandHeight * (index + 1),
+        layout.stageWidth,
+        bandHeight + 2,
+      );
+      graphics.fill();
+    });
+
     this.createGlow(
       background,
       new Vec3(-layout.stageWidth * 0.31, layout.stageHeight * 0.35, 0),
       Math.min(layout.stageWidth * 0.34, 248),
-      new Color(84, 132, 255, 40),
+      new Color(255, 246, 186, 58),
     );
     this.createGlow(
       background,
       new Vec3(layout.stageWidth * 0.34, layout.stageHeight * 0.08, 0),
       Math.min(layout.stageWidth * 0.26, 186),
-      new Color(255, 120, 206, 26),
+      new Color(255, 143, 212, 46),
     );
     this.createGlow(
       background,
       new Vec3(0, -layout.stageHeight * 0.39, 0),
       Math.min(layout.stageWidth * 0.38, 274),
-      new Color(97, 205, 255, 18),
+      new Color(110, 239, 221, 38),
     );
 
     this.createPanel(
       "BackdropAura",
       background,
       new Vec3(0, layout.boardY - 8, 0),
-      new Size(layout.contentWidth + 12, Math.min(layout.stageHeight * 0.67, 850)),
-      new Color(20, 28, 60, 72),
-      new Color(121, 164, 255, 36),
+      new Size(layout.contentWidth + 12, Math.min(layout.stageHeight * 0.78, 1040)),
+      new Color(255, 255, 255, 52),
+      new Color(111, 159, 255, 46),
       56,
       2,
     );
@@ -259,8 +300,8 @@ export class GameRoot extends Component {
       background,
       new Vec3(0, -layout.stageHeight * 0.38, 0),
       new Size(layout.contentWidth + 6, Math.min(layout.stageHeight * 0.22, 300)),
-      new Color(18, 27, 56, 84),
-      new Color(107, 224, 255, 28),
+      new Color(255, 240, 251, 50),
+      new Color(255, 182, 225, 45),
       44,
       2,
     );
@@ -271,28 +312,30 @@ export class GameRoot extends Component {
       new Vec3(0, 0, 0),
       new Size(layout.stageWidth - 22, layout.stageHeight - 26),
       new Color(0, 0, 0, 0),
-      new Color(71, 102, 190, 66),
+      new Color(255, 255, 255, 88),
       42,
       2,
     );
+
+    this.createBubbleField(background, layout);
 
     this.createGlow(
       background,
       new Vec3(-layout.stageWidth * 0.39, layout.stageHeight * 0.46, 0),
       10,
-      new Color(255, 255, 255, 120),
+      new Color(255, 255, 255, 150),
     );
     this.createGlow(
       background,
       new Vec3(layout.stageWidth * 0.36, layout.stageHeight * 0.42, 0),
       8,
-      new Color(120, 229, 255, 120),
+      new Color(255, 251, 189, 140),
     );
     this.createGlow(
       background,
       new Vec3(layout.stageWidth * 0.41, -layout.stageHeight * 0.12, 0),
       12,
-      new Color(255, 184, 228, 86),
+      new Color(255, 255, 255, 116),
     );
   }
 
@@ -363,7 +406,8 @@ export class GameRoot extends Component {
     mask.on(NodeEventType.TOUCH_START, this.swallowTouch, this);
     mask.on(NodeEventType.TOUCH_END, this.swallowTouch, this);
 
-    const cardSize = new Size(Math.min(layout.contentWidth - 4, 704), Math.min(layout.stageHeight - 140, 1080));
+    const cardSize = new Size(Math.min(layout.stageWidth - 4, 900), Math.min(layout.stageHeight - 24, 1260));
+    const cardTop = cardSize.height / 2;
     const card = this.createPanel(
       "InstructionCard",
       mask,
@@ -378,9 +422,9 @@ export class GameRoot extends Component {
     const title = this.createLabel(
       "InstructionTitle",
       card,
-      new Vec3(0, cardSize.height / 2 - 82, 0),
-      new Size(cardSize.width - 96, 62),
-      52,
+      new Vec3(0, cardTop - 74, 0),
+      new Size(cardSize.width - 76, 78),
+      60,
       new Color(255, 235, 172, 255),
       true,
     );
@@ -389,28 +433,29 @@ export class GameRoot extends Component {
     const desc = this.createLabel(
       "InstructionDesc",
       card,
-      new Vec3(0, cardSize.height / 2 - 238, 0),
-      new Size(cardSize.width - 74, 230),
-      31,
+      new Vec3(0, cardTop - 278, 0),
+      new Size(cardSize.width - 86, 360),
+      32,
       new Color(224, 234, 255, 255),
     );
-    desc.lineHeight = 39;
+    desc.horizontalAlign = Label.HorizontalAlign.LEFT;
+    desc.lineHeight = 44;
     desc.string = [
       "3 分钟内尽量获得更高总分。",
-      "点击任意两个方块即可交换，形成 3 个及以上相同图标会消除。",
-      "本局得分下方会显示当前任务，完成后自动领取奖励并刷新新任务。",
+      "任意交换两个方块，3 个以上相同图标会消除。",
+      "消除成功 +1 秒，没有消除 -2 秒。",
+      "完成任务会自动领奖，并刷新下一个任务。",
       "低分图标更常出现，高分图标更稀有。",
-      "当前任务只需要消除普通图标，新手也能快速理解。",
-      "倒计时结束时可看广告增加 30 秒挑战时间。",
-      "消除单个价值 50 分及以上的图标时会弹出幸运翻倍。",
+      "开奖可能获得加时、翻倍或超级大奖。",
+      "50 分以上图标可能触发清屏广告。",
     ].join("\n");
 
     const scoreTitle = this.createLabel(
       "InstructionScoreTitle",
       card,
-      new Vec3(0, cardSize.height / 2 - 405, 0),
-      new Size(cardSize.width - 90, 42),
-      34,
+      new Vec3(0, cardTop - 520, 0),
+      new Size(cardSize.width - 88, 62),
+      42,
       new Color(255, 235, 172, 255),
       true,
     );
@@ -422,35 +467,40 @@ export class GameRoot extends Component {
     const leftScoreList = this.createLabel(
       "InstructionScoreListLeft",
       card,
-      new Vec3(-cardSize.width * 0.25, -cardSize.height * 0.08, 0),
-      new Size(cardSize.width * 0.42, 450),
-      29,
+      new Vec3(-cardSize.width * 0.24, cardTop - 735, 0),
+      new Size(cardSize.width * 0.43, 320),
+      36,
       new Color(224, 234, 255, 255),
     );
     leftScoreList.horizontalAlign = Label.HorizontalAlign.LEFT;
-    leftScoreList.lineHeight = 41;
-    leftScoreList.string = scoreLines.slice(0, 10).join("\n");
+    leftScoreList.lineHeight = 52;
+    leftScoreList.string = scoreLines.slice(0, 5).join("\n");
 
     const rightScoreList = this.createLabel(
       "InstructionScoreListRight",
       card,
-      new Vec3(cardSize.width * 0.25, -cardSize.height * 0.08, 0),
-      new Size(cardSize.width * 0.42, 450),
-      29,
+      new Vec3(cardSize.width * 0.25, cardTop - 735, 0),
+      new Size(cardSize.width * 0.42, 320),
+      36,
       new Color(224, 234, 255, 255),
     );
     rightScoreList.horizontalAlign = Label.HorizontalAlign.LEFT;
-    rightScoreList.lineHeight = 41;
-    rightScoreList.string = scoreLines.slice(10).join("\n");
+    rightScoreList.lineHeight = 52;
+    rightScoreList.string = scoreLines.slice(5).join("\n");
 
     const closeButton = this.createButton(
       "InstructionCloseButton",
       card,
-      new Vec3(0, -cardSize.height / 2 + 84, 0),
-      new Size(310, 90),
+      new Vec3(0, -cardTop + 98, 0),
+      new Size(380, 104),
       "知道了",
       true,
     );
+    const closeLabel = closeButton.getChildByName("InstructionCloseButton-label")?.getComponent(Label);
+    if (closeLabel) {
+      closeLabel.fontSize = 40;
+      closeLabel.lineHeight = 52;
+    }
     closeButton.on(NodeEventType.TOUCH_END, () => this.hideInstructionPanel(), this);
 
     this.instructionPanel = mask;
@@ -500,33 +550,38 @@ export class GameRoot extends Component {
     graphics.stroke();
   }
 
-  private createBoardFrameDecor(parent: Node, frameSize: number, boardSize: number): void {
-    const decorNode = this.createNode("BoardDecor", parent, Vec3.ZERO, new Size(frameSize, frameSize));
+  private createBoardFrameDecor(parent: Node, frameSize: Size, boardSize: Size): void {
+    const decorNode = this.createNode("BoardDecor", parent, Vec3.ZERO, frameSize);
     const graphics = decorNode.addComponent(Graphics);
     graphics.strokeColor = new Color(167, 215, 255, 84);
     graphics.lineWidth = 2;
 
-    const offset = boardSize / 2;
-    const outer = frameSize / 2 - 18;
-    graphics.roundRect(-outer, -outer, outer * 2, outer * 2, 30);
+    const boardOffsetX = boardSize.width / 2;
+    const boardOffsetY = boardSize.height / 2;
+    const outerX = frameSize.width / 2 - 18;
+    const outerY = frameSize.height / 2 - 18;
+    graphics.roundRect(-outerX, -outerY, outerX * 2, outerY * 2, 30);
     graphics.stroke();
 
     for (let i = 1; i < GameConfig.board.rows; i += 1) {
-      const pos = -offset + i * (boardSize / GameConfig.board.rows);
-      graphics.moveTo(-offset, pos);
-      graphics.lineTo(offset, pos);
+      const pos = -boardOffsetY + i * (boardSize.height / GameConfig.board.rows);
+      graphics.moveTo(-boardOffsetX, pos);
+      graphics.lineTo(boardOffsetX, pos);
       graphics.stroke();
+    }
 
-      graphics.moveTo(pos, -offset);
-      graphics.lineTo(pos, offset);
+    for (let i = 1; i < GameConfig.board.cols; i += 1) {
+      const pos = -boardOffsetX + i * (boardSize.width / GameConfig.board.cols);
+      graphics.moveTo(pos, -boardOffsetY);
+      graphics.lineTo(pos, boardOffsetY);
       graphics.stroke();
     }
 
     const accent = 34;
-    this.drawCornerAccent(graphics, -outer + 10, outer - 10, accent, false, true);
-    this.drawCornerAccent(graphics, outer - 10, outer - 10, accent, true, true);
-    this.drawCornerAccent(graphics, -outer + 10, -outer + 10, accent, false, false);
-    this.drawCornerAccent(graphics, outer - 10, -outer + 10, accent, true, false);
+    this.drawCornerAccent(graphics, -outerX + 10, outerY - 10, accent, false, true);
+    this.drawCornerAccent(graphics, outerX - 10, outerY - 10, accent, true, true);
+    this.drawCornerAccent(graphics, -outerX + 10, -outerY + 10, accent, false, false);
+    this.drawCornerAccent(graphics, outerX - 10, -outerY + 10, accent, true, false);
   }
 
   private createIconBadge(parent: Node, iconText: string, labelText: string, position: Vec3): Node {
@@ -660,6 +715,73 @@ export class GameRoot extends Component {
     graphics.fill();
   }
 
+  private createBubbleField(parent: Node, layout: LayoutMetrics): void {
+    const bubbleConfigs = [
+      { x: -0.42, y: -0.34, r: 14, delay: 0.1, duration: 7.4 },
+      { x: -0.28, y: -0.12, r: 9, delay: 1.2, duration: 6.8 },
+      { x: -0.18, y: 0.23, r: 16, delay: 2.1, duration: 8.2 },
+      { x: -0.05, y: -0.42, r: 11, delay: 0.7, duration: 7.1 },
+      { x: 0.12, y: -0.18, r: 18, delay: 1.7, duration: 8.6 },
+      { x: 0.27, y: 0.18, r: 10, delay: 0.4, duration: 6.5 },
+      { x: 0.39, y: -0.36, r: 13, delay: 2.6, duration: 7.8 },
+      { x: 0.44, y: 0.32, r: 8, delay: 1.0, duration: 6.2 },
+      { x: -0.36, y: 0.39, r: 7, delay: 3.0, duration: 6.9 },
+      { x: 0.02, y: 0.34, r: 12, delay: 2.4, duration: 7.3 },
+      { x: 0.31, y: -0.02, r: 15, delay: 3.5, duration: 8.1 },
+      { x: -0.48, y: 0.04, r: 10, delay: 1.8, duration: 7.0 },
+    ];
+
+    bubbleConfigs.forEach((config, index) => {
+      const start = new Vec3(layout.stageWidth * config.x, layout.stageHeight * config.y, 0);
+      this.createFloatingBubble(parent, `Bubble${index}`, start, config.r, config.delay, config.duration);
+    });
+  }
+
+  private createFloatingBubble(parent: Node, name: string, start: Vec3, radius: number, delay: number, duration: number): void {
+    const bubble = this.createNode(name, parent, start, new Size(radius * 2.6, radius * 2.6));
+    const opacity = bubble.addComponent(UIOpacity);
+    opacity.opacity = 100;
+
+    const graphics = bubble.addComponent(Graphics);
+    graphics.strokeColor = new Color(255, 255, 255, 118);
+    graphics.lineWidth = Math.max(2, Math.round(radius * 0.16));
+    graphics.circle(0, 0, radius);
+    graphics.stroke();
+    graphics.fillColor = new Color(255, 255, 255, 24);
+    graphics.circle(0, 0, Math.max(radius - 2, 1));
+    graphics.fill();
+
+    const resetBubble = (): void => {
+      bubble.setPosition(start);
+      bubble.scale = Vec3.ONE.clone();
+      opacity.opacity = 96;
+    };
+    const midpoint = new Vec3(start.x + radius * 1.4, start.y + radius * 6.8, 0);
+    const end = new Vec3(start.x - radius * 1.2, start.y + radius * 13.5, 0);
+
+    tween(bubble)
+      .delay(delay)
+      .repeatForever(
+        tween<Node>()
+          .call(resetBubble)
+          .to(duration * 0.52, { position: midpoint, scale: new Vec3(1.12, 1.12, 1) })
+          .to(duration * 0.48, { position: end, scale: new Vec3(0.86, 0.86, 1) }),
+      )
+      .start();
+
+    tween(opacity)
+      .delay(delay)
+      .repeatForever(
+        tween<UIOpacity>()
+          .call(() => {
+            opacity.opacity = 96;
+          })
+          .to(duration * 0.28, { opacity: 150 })
+          .to(duration * 0.72, { opacity: 0 }),
+      )
+      .start();
+  }
+
   private createNode(name: string, parent: Node, position: Vec3, size: Size): Node {
     const node = new Node(name);
     node.layer = Layers.Enum.UI_2D;
@@ -732,10 +854,11 @@ export class GameRoot extends Component {
     const topHudBottom = topHudY - topHudHeight / 2;
     const taskY = topHudBottom - sectionGap - taskHeight / 2;
     const taskBottom = taskY - taskHeight / 2;
-    const boardAreaTop = taskBottom - sectionGap;
-    const boardAreaBottom = bottomY + bottomInset;
-    const boardFrameSize = Math.min(contentWidth, boardAreaTop - boardAreaBottom);
-    const boardScale = Math.max(1, Math.min((boardFrameSize - 12) / GameConfig.board.pixelSize, 1.5));
+    const boardAreaTop = taskBottom - Math.max(4, sectionGap * 0.5);
+    const boardAreaBottom = bottomY + Math.max(2, bottomInset * 0.35);
+    const boardFrameWidth = contentWidth;
+    const boardFrameHeight = Math.max(0, boardAreaTop - boardAreaBottom);
+    const boardContentSize = new Size(Math.max(boardFrameWidth - 20, 1), Math.max(boardFrameHeight - 20, 1));
     const boardY = (boardAreaTop + boardAreaBottom) / 2;
 
     return {
@@ -748,9 +871,9 @@ export class GameRoot extends Component {
       taskY,
       topHudSize: new Size(contentWidth, topHudHeight),
       topHudY,
-      boardFrameSize,
+      boardFrameSize: new Size(boardFrameWidth, boardFrameHeight),
+      boardContentSize,
       boardY,
-      boardScale,
     };
   }
 }

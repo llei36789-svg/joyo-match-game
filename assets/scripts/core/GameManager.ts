@@ -7,6 +7,7 @@ import { BlockState, GameState, ITEM_SCORE_MAP, ITEM_TYPES, ItemType, LEVELS, Le
 import { TweenUtil } from "../util/TweenUtil";
 import { UIBonusPanel } from "../ui/UIBonusPanel";
 import { UIGamePanel } from "../ui/UIGamePanel";
+import { UILotteryPanel, type LotteryRarity } from "../ui/UILotteryPanel";
 import { UIResultPanel } from "../ui/UIResultPanel";
 import { UITaskPanel } from "../ui/UITaskPanel";
 
@@ -33,6 +34,7 @@ interface GameManagerOptions {
   uiPanel: UIGamePanel;
   taskPanel: UITaskPanel;
   bonusPanel: UIBonusPanel;
+  lotteryPanel: UILotteryPanel;
   resultPanel: UIResultPanel;
   statusCallback: (message: string) => void;
 }
@@ -52,6 +54,15 @@ interface RemovalResult {
   score: number;
   total: number;
   itemCounts: Partial<Record<ItemType, number>>;
+}
+
+interface LotteryReward {
+  title: string;
+  detail: string;
+  rarity: LotteryRarity;
+  scoreBonus?: number;
+  timeBonusSec?: number;
+  isBigWin?: boolean;
 }
 
 const ITEM_NAME_MAP: Record<ItemType, string> = {
@@ -85,6 +96,7 @@ export class GameManager {
   private readonly uiPanel: UIGamePanel;
   private readonly taskPanel: UITaskPanel;
   private readonly bonusPanel: UIBonusPanel;
+  private readonly lotteryPanel: UILotteryPanel;
   private readonly resultPanel: UIResultPanel;
   private readonly statusCallback: (message: string) => void;
 
@@ -98,9 +110,11 @@ export class GameManager {
   private isWatchingPowerAd = false;
   private hasUsedExtraTimeAd = false;
   private isWatchingBonusAd = false;
-  private pendingBonusScore = 0;
+  private hasPendingScreenClearAd = false;
+  private bonusAdShownCount = 0;
   private lastBonusOfferAtMs = 0;
   private activeTask: ActiveTask | null = null;
+  private lotteryPity = 0;
 
   constructor(options: GameManagerOptions) {
     this.gridManager = options.gridManager;
@@ -108,6 +122,7 @@ export class GameManager {
     this.uiPanel = options.uiPanel;
     this.taskPanel = options.taskPanel;
     this.bonusPanel = options.bonusPanel;
+    this.lotteryPanel = options.lotteryPanel;
     this.resultPanel = options.resultPanel;
     this.statusCallback = options.statusCallback;
   }
@@ -126,8 +141,10 @@ export class GameManager {
     this.hasUsedExtraTimeAd = false;
     this.isWatchingPowerAd = false;
     this.isWatchingBonusAd = false;
-    this.pendingBonusScore = 0;
+    this.hasPendingScreenClearAd = false;
+    this.bonusAdShownCount = 0;
     this.lastBonusOfferAtMs = 0;
+    this.lotteryPity = 0;
     this.activeTask = this.createNextTask();
     this.clearBonusScoreOffer();
     this.state = GameState.WAIT_INPUT;
@@ -193,18 +210,17 @@ export class GameManager {
   }
 
   async handleBonusScoreAdAction(): Promise<void> {
-    if (this.isWatchingBonusAd || this.pendingBonusScore <= 0 || this.state === GameState.LEVEL_END) {
+    if (this.isWatchingBonusAd || !this.hasPendingScreenClearAd || this.state === GameState.LEVEL_END) {
       return;
     }
 
-    const bonusScore = this.pendingBonusScore;
     this.bonusPanel.setClaimEnabled(false);
     this.isWatchingBonusAd = true;
-    this.statusCallback("正在领取幸运翻倍...");
+    this.statusCallback("正在触发超级大奖...");
     const watched = await this.watchRewardedAd(GameConfig.bonusAd.adUnitId);
     this.isWatchingBonusAd = false;
     if (!watched) {
-      this.statusCallback("完整观看广告后才能领取翻倍奖励");
+      this.statusCallback("完整观看广告后才能清除全屏");
       this.bonusPanel.setClaimEnabled(true);
       return;
     }
@@ -214,12 +230,8 @@ export class GameManager {
       return;
     }
 
-    this.score += bonusScore;
-    const bonusPosition = { row: Math.floor(GameConfig.board.rows / 2), col: Math.floor(GameConfig.board.cols / 2) };
-    this.gridManager.showFloatingScore([bonusPosition], bonusScore);
-    this.uiPanel.playScoreFlyFromWorld(this.gridManager.getPositionsWorldCenter([bonusPosition]), bonusScore);
     this.clearBonusScoreOffer();
-    this.refreshUi(`幸运翻倍 +${bonusScore}`);
+    await this.triggerScreenClearPrize();
     this.resumeCountdownTimer();
   }
 
@@ -316,6 +328,7 @@ export class GameManager {
       const addScore = this.applyScore(removalResult.score, removalResult.total, triggeredSpecialType, this.chainStep);
       this.gridManager.showFloatingScore(removalPositions, addScore);
       this.uiPanel.playScoreFlyFromWorld(this.gridManager.getPositionsWorldCenter(removalPositions), addScore);
+      this.applyLotteryReward(addScore, removalPositions);
       this.updateTaskProgress(removalResult);
       this.maybeShowBonusScoreOffer(addScore, removalResult);
 
@@ -324,7 +337,7 @@ export class GameManager {
         const node = this.gridManager.getNode(pendingSpecial.position.row, pendingSpecial.position.col);
         if (cell.itemType && node) {
           cell.specialType = pendingSpecial.specialType;
-          this.itemManager.updateItemNode(node, cell.itemType, cell.specialType, GameConfig.board.tileSize);
+          this.itemManager.updateItemNode(node, cell.itemType, cell.specialType, this.gridManager.getTileSize());
         }
       }
 
@@ -412,6 +425,76 @@ export class GameManager {
     }
 
     this.refreshTaskUi();
+  }
+
+  private applyLotteryReward(addScore: number, sourcePositions: Position[]): void {
+    const reward = this.rollLotteryReward(addScore);
+    if (!reward) {
+      return;
+    }
+
+    this.lotteryPanel.show({
+      title: reward.title,
+      detail: reward.detail,
+      rarity: reward.rarity,
+    });
+
+    if (reward.scoreBonus && reward.scoreBonus > 0) {
+      this.score += reward.scoreBonus;
+      this.gridManager.showFloatingScore(sourcePositions, reward.scoreBonus);
+      this.uiPanel.playScoreFlyFromWorld(this.gridManager.getPositionsWorldCenter(sourcePositions), reward.scoreBonus);
+    }
+
+    if (reward.timeBonusSec && reward.timeBonusSec > 0) {
+      this.timeLeftSec += reward.timeBonusSec;
+    }
+
+    this.refreshUi(reward.isBigWin ? `抽中大奖！${reward.detail}` : `开奖：${reward.detail}`);
+  }
+
+  private rollLotteryReward(addScore: number): LotteryReward | null {
+    const pityBonus = Math.min(
+      this.lotteryPity * GameConfig.lottery.pityChanceStep,
+      GameConfig.lottery.maxPityChanceBonus,
+    );
+    const jackpotChance = GameConfig.lottery.jackpotBaseChance + pityBonus;
+    const doubleChance = GameConfig.lottery.doubleBaseChance + pityBonus * 0.5;
+    const roll = Math.random();
+
+    if (roll < jackpotChance) {
+      this.lotteryPity = 0;
+      return {
+        title: "超级大奖",
+        detail: `幸运金票 +${GameConfig.lottery.jackpotScore}`,
+        rarity: "jackpot",
+        scoreBonus: GameConfig.lottery.jackpotScore,
+        isBigWin: true,
+      };
+    }
+
+    if (roll < jackpotChance + doubleChance) {
+      this.lotteryPity = 0;
+      return {
+        title: "稀有奖励",
+        detail: `本次得分翻倍 +${addScore}`,
+        rarity: "epic",
+        scoreBonus: addScore,
+        isBigWin: true,
+      };
+    }
+
+    this.lotteryPity += 1;
+    if (roll < jackpotChance + doubleChance + GameConfig.lottery.timeChance) {
+      const timeBonusSec = this.randomInt(GameConfig.lottery.timeMinSec, GameConfig.lottery.timeMaxSec);
+      return {
+        title: "幸运加时",
+        detail: `挑战时间 +${timeBonusSec} 秒`,
+        rarity: "rare",
+        timeBonusSec,
+      };
+    }
+
+    return null;
   }
 
   private completeTask(task: ActiveTask): void {
@@ -540,8 +623,61 @@ export class GameManager {
     });
   }
 
+  private async triggerScreenClearPrize(): Promise<void> {
+    const positions = this.getAllFilledPositions();
+    if (positions.length === 0) {
+      this.state = GameState.WAIT_INPUT;
+      this.refreshUi("超级大奖已触发");
+      return;
+    }
+
+    this.selectedCell = null;
+    this.gridManager.clearSelection();
+    this.clearHintVisuals();
+    this.state = GameState.MATCHING;
+
+    const removalResult = await this.removeCells(positions);
+    const prizeScore = this.applyScore(removalResult.score, removalResult.total, SpecialType.None, 1);
+    this.gridManager.showFloatingScore(positions, prizeScore);
+    this.uiPanel.playScoreFlyFromWorld(this.gridManager.getPositionsWorldCenter(positions), prizeScore);
+    this.updateTaskProgress(removalResult);
+
+    this.state = GameState.DROPING;
+    await this.dropManager.collapseAndRefill(this.gridManager, this.itemManager);
+
+    const analysis = this.matchCheck.findMatches(this.gridManager.gridData);
+    if (analysis.allMatches.length > 0) {
+      this.chainStep = 0;
+      await this.resolveMatches(analysis.allMatches, analysis.specialSpawn);
+    }
+
+    if (!this.isLevelEnded()) {
+      this.state = GameState.WAIT_INPUT;
+      this.refreshUi("超级大奖清除全屏");
+    }
+  }
+
+  private getAllFilledPositions(): Position[] {
+    const positions: Position[] = [];
+    for (let row = 0; row < GameConfig.board.rows; row += 1) {
+      for (let col = 0; col < GameConfig.board.cols; col += 1) {
+        const cell = this.gridManager.getCell(row, col);
+        if (cell?.itemType) {
+          positions.push({ row, col });
+        }
+      }
+    }
+    return positions;
+  }
+
   private maybeShowBonusScoreOffer(addScore: number, removalResult: RemovalResult): void {
-    if (this.state === GameState.LEVEL_END || this.isWatchingBonusAd) {
+    void addScore;
+    if (
+      this.state === GameState.LEVEL_END ||
+      this.isWatchingBonusAd ||
+      this.hasPendingScreenClearAd ||
+      this.bonusAdShownCount >= GameConfig.bonusAd.maxPerGame
+    ) {
       return;
     }
 
@@ -555,20 +691,22 @@ export class GameManager {
     }
 
     this.lastBonusOfferAtMs = now;
-    this.pendingBonusScore = Math.max(this.pendingBonusScore, addScore);
+    this.hasPendingScreenClearAd = true;
+    this.bonusAdShownCount += 1;
   }
 
   private presentBonusScoreOffer(): void {
-    if (this.pendingBonusScore <= 0 || this.state === GameState.LEVEL_END) {
+    if (!this.hasPendingScreenClearAd || this.state === GameState.LEVEL_END) {
       return;
     }
 
     this.pauseCountdownTimer();
-    this.bonusPanel.show(this.pendingBonusScore);
+    const remainingOfferCount = Math.max(1, GameConfig.bonusAd.maxPerGame - this.bonusAdShownCount + 1);
+    this.bonusPanel.show(remainingOfferCount);
   }
 
   private clearBonusScoreOffer(): void {
-    this.pendingBonusScore = 0;
+    this.hasPendingScreenClearAd = false;
     this.bonusPanel.hide();
   }
 

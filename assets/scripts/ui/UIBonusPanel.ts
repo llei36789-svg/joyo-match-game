@@ -91,7 +91,7 @@ export class UIBonusPanel extends Component {
       new Color(255, 229, 245, 255),
       true,
     );
-    badgeLabel.string = "爆分时刻";
+    badgeLabel.string = "超级大奖";
 
     const title = createLabel(
       "BonusTitle",
@@ -102,7 +102,7 @@ export class UIBonusPanel extends Component {
       new Color(255, 241, 186, 255),
       true,
     );
-    title.string = "幸运翻倍";
+    title.string = "清屏机会";
 
     const desc = createLabel(
       "BonusDesc",
@@ -113,24 +113,25 @@ export class UIBonusPanel extends Component {
       new Color(220, 232, 255, 255),
     );
     desc.lineHeight = 38;
-    desc.string = "刚才这次消除手感很好\n看广告可把奖励再拿一份";
+    desc.string = "看广告立即清除整个棋盘\n一局最多出现 2 次";
 
     this.scoreLabel = createLabel(
       "BonusScore",
       card,
       new Vec3(0, -28, 0),
       new Size(cardSize.width - 96, 96),
-      66,
+      56,
       new Color(255, 218, 102, 255),
       true,
     );
+    this.scoreLabel.lineHeight = 66;
 
     this.claimButton = createButton(
       "BonusClaimButton",
       card,
       new Vec3(0, -156, 0),
       new Size(392, 92),
-      "看广告领取",
+      "看广告触发",
       true,
     );
     this.claimButtonLabel = this.claimButton.getChildByName("BonusClaimButton-label")?.getComponent(Label) ?? null;
@@ -165,7 +166,7 @@ export class UIBonusPanel extends Component {
     this.onClose = onClose;
   }
 
-  show(score: number): void {
+  show(remainingCount: number): void {
     if (!this.maskNode) {
       return;
     }
@@ -173,7 +174,7 @@ export class UIBonusPanel extends Component {
     this.maskNode.active = true;
     this.maskNode.setSiblingIndex(this.node.children.length - 1);
     if (this.scoreLabel) {
-      this.scoreLabel.string = `+${score}`;
+      this.scoreLabel.string = `清除全屏\n剩余 ${remainingCount} 次`;
     }
     this.setClaimEnabled(true);
     this.sparkleNodes.forEach((node) => {
@@ -197,7 +198,7 @@ export class UIBonusPanel extends Component {
       this.claimButton.scale = Vec3.ONE.clone();
     }
     if (this.claimButtonLabel) {
-      this.claimButtonLabel.string = enabled ? "看广告领取" : "领取中...";
+      this.claimButtonLabel.string = enabled ? "看广告触发" : "触发中...";
       this.claimButtonLabel.color = enabled
         ? new Color(182, 247, 255, 255)
         : new Color(190, 198, 220, 220);

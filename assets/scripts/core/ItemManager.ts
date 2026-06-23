@@ -275,22 +275,25 @@ export class ItemManager {
     node.active = true;
     node.scale = Vec3.ONE.clone();
 
+    const visualSize = this.getCrispVisualSize(size);
     const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
-    transform.setContentSize(new Size(size - 8, size - 8));
+    transform.setContentSize(new Size(visualSize, visualSize));
     const opacity = node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity);
     opacity.opacity = 255;
 
     const graphics = node.getComponent(Graphics) ?? node.addComponent(Graphics);
-    const label = node.getChildByName("Symbol") ?? this.createSymbolNode(node, size - 8);
-    const brandLabelNode = node.getChildByName("BrandMark") ?? this.createBrandMarkNode(node, size - 8);
-    const fxNode = node.getChildByName("SpecialFx") ?? this.createSpecialFxNode(node, size - 8);
+    const label = node.getChildByName("Symbol") ?? this.createSymbolNode(node, visualSize);
+    const brandLabelNode = node.getChildByName("BrandMark") ?? this.createBrandMarkNode(node, visualSize);
+    const fxNode = node.getChildByName("SpecialFx") ?? this.createSpecialFxNode(node, visualSize);
+    this.resizeChild(label, visualSize - 10, visualSize - 10);
+    this.resizeChild(brandLabelNode, visualSize - 12, visualSize - 12);
     const symbolLabel = label.getComponent(Label)!;
     const brandLabel = brandLabelNode.getComponent(Label)!;
 
-    this.drawItem(graphics, itemType, specialType, size - 8);
-    this.updateBrandMark(brandLabel, itemType, size - 8);
+    this.drawItem(graphics, itemType, specialType, visualSize);
+    this.updateBrandMark(brandLabel, itemType, visualSize);
     this.hideScoreMark(node);
-    this.updateSpecialFx(fxNode, specialType, size - 8);
+    this.updateSpecialFx(fxNode, specialType, visualSize);
     brandLabelNode.setSiblingIndex(Math.max(0, node.children.length - 3));
     fxNode.setSiblingIndex(Math.max(0, node.children.length - 2));
     label.setSiblingIndex(Math.max(0, node.children.length - 1));
@@ -300,16 +303,25 @@ export class ItemManager {
   }
 
   updateItemNode(node: Node, itemType: ItemType, specialType: SpecialType, size: number): void {
+    const visualSize = this.getCrispVisualSize(size);
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    transform.setContentSize(new Size(visualSize, visualSize));
     const graphics = node.getComponent(Graphics)!;
-    const label = node.getChildByName("Symbol")?.getComponent(Label);
-    const brandLabel = (node.getChildByName("BrandMark") ?? this.createBrandMarkNode(node, size - 8)).getComponent(Label);
-    const fxNode = node.getChildByName("SpecialFx") ?? this.createSpecialFxNode(node, size - 8);
-    this.drawItem(graphics, itemType, specialType, size - 8);
+    const labelNode = node.getChildByName("Symbol");
+    const label = labelNode?.getComponent(Label);
+    const brandLabelNode = node.getChildByName("BrandMark") ?? this.createBrandMarkNode(node, visualSize);
+    const brandLabel = brandLabelNode.getComponent(Label);
+    const fxNode = node.getChildByName("SpecialFx") ?? this.createSpecialFxNode(node, visualSize);
+    if (labelNode) {
+      this.resizeChild(labelNode, visualSize - 10, visualSize - 10);
+    }
+    this.resizeChild(brandLabelNode, visualSize - 12, visualSize - 12);
+    this.drawItem(graphics, itemType, specialType, visualSize);
     if (brandLabel) {
-      this.updateBrandMark(brandLabel, itemType, size - 8);
+      this.updateBrandMark(brandLabel, itemType, visualSize);
     }
     this.hideScoreMark(node);
-    this.updateSpecialFx(fxNode, specialType, size - 8);
+    this.updateSpecialFx(fxNode, specialType, visualSize);
     node.getChildByName("BrandMark")?.setSiblingIndex(Math.max(0, node.children.length - 3));
     fxNode.setSiblingIndex(Math.max(0, node.children.length - 2));
     node.getChildByName("Symbol")?.setSiblingIndex(Math.max(0, node.children.length - 1));
@@ -320,6 +332,15 @@ export class ItemManager {
     const opacity = node.getComponent(UIOpacity) ?? node.addComponent(UIOpacity);
     opacity.opacity = 255;
     node.scale = Vec3.ONE.clone();
+  }
+
+  private getCrispVisualSize(size: number): number {
+    return Math.max(24, Math.round(size * 0.98));
+  }
+
+  private resizeChild(node: Node, width: number, height: number): void {
+    const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
+    transform.setContentSize(new Size(Math.max(width, 1), Math.max(height, 1)));
   }
 
   recycleItemNode(node: Node): void {
@@ -412,36 +433,36 @@ export class ItemManager {
 
   private drawItem(graphics: Graphics, itemType: ItemType, specialType: SpecialType, size: number): void {
     const baseColor = specialType === SpecialType.Rainbow ? new Color(255, 255, 255, 255) : ITEM_COLOR_MAP[itemType];
-    const strokeColor = specialType === SpecialType.Rainbow ? new Color(255, 178, 255, 255) : this.enhance(baseColor, 36);
+    const strokeColor = specialType === SpecialType.Rainbow ? new Color(255, 178, 255, 255) : this.enhance(baseColor, 54);
     const shape = ITEM_SHAPE_MAP[itemType];
-    const shadowColor = new Color(8, 14, 30, 72);
-    const highlightColor = new Color(255, 255, 255, 44);
+    const shadowColor = new Color(8, 14, 30, 96);
+    const highlightColor = new Color(255, 255, 255, 58);
     const innerColor =
       specialType === SpecialType.Rainbow
         ? new Color(255, 229, 255, 144)
-        : this.enhance(baseColor, 22, Math.min(baseColor.a + 12, 255));
+        : this.enhance(baseColor, 18, Math.min(baseColor.a + 10, 255));
 
     graphics.clear();
 
     graphics.fillColor = shadowColor;
-    this.traceShape(graphics, shape, size * 0.9, -3);
+    this.traceShape(graphics, shape, size * 1.02, -2);
     graphics.fill();
 
     graphics.fillColor = baseColor;
-    this.traceShape(graphics, shape, size * 0.88, 0);
+    this.traceShape(graphics, shape, size * 0.98, 0);
     graphics.fill();
 
     graphics.strokeColor = strokeColor;
-    graphics.lineWidth = 4;
-    this.traceShape(graphics, shape, size * 0.88, 0);
+    graphics.lineWidth = Math.max(4, size * 0.085);
+    this.traceShape(graphics, shape, size * 0.98, 0);
     graphics.stroke();
 
     graphics.fillColor = innerColor;
-    this.traceShape(graphics, shape, size * 0.54, 2);
+    this.traceShape(graphics, shape, size * 0.46, 2);
     graphics.fill();
 
     graphics.fillColor = highlightColor;
-    this.traceShape(graphics, shape, size * 0.34, 11);
+    this.traceShape(graphics, shape, size * 0.22, size * 0.18);
     graphics.fill();
   }
 

@@ -36,16 +36,18 @@ export class DropManager {
         }
       }
 
+      const emptyCount = writeRow + 1;
       for (let row = writeRow; row >= 0; row -= 1) {
         const itemType = gridManager.getRandomItemType();
-        const node = itemManager.createItemNode(itemType, SpecialType.None, GameConfig.board.tileSize);
+        const node = itemManager.createItemNode(itemType, SpecialType.None, gridManager.getTileSize());
         node.parent = gridManager.getBoardNode();
-        node.setPosition(gridManager.cellToPosition(row - rows, col));
+        const spawnRow = row - emptyCount;
+        node.setPosition(gridManager.cellToPosition(spawnRow, col));
         gridManager.setCell(row, col, itemType, SpecialType.None, node.uuid, BlockState.Normal);
         tasks.push(
           TweenUtil.moveTo(
             node,
-            Math.max(GameConfig.board.dropDurationPerCell * (writeRow - row + 2), 0.12),
+            Math.max(GameConfig.board.dropDurationPerCell * emptyCount, 0.12),
             gridManager.cellToPosition(row, col),
           ),
         );

@@ -1,5 +1,4 @@
 import { Color, Graphics, Label, Layers, Node, Size, Tween, tween, UIOpacity, UITransform, Vec3 } from "cc";
-import { GameConfig } from "./GameConfig";
 import { ItemManager } from "./ItemManager";
 import { MatchCheck } from "./MatchCheck";
 import { BlockState, GridCellData, ITEM_SPAWN_WEIGHT_MAP, ITEM_TYPES, ItemType, Position, SpecialType } from "../data/LevelData";
@@ -8,6 +7,10 @@ interface GridManagerOptions {
   boardNode: Node;
   itemManager: ItemManager;
   tileSize: number;
+  cellWidth: number;
+  cellHeight: number;
+  boardWidth: number;
+  boardHeight: number;
   rows: number;
   cols: number;
 }
@@ -111,7 +114,7 @@ export class GridManager {
       .parallel(
         tween<Node>()
           .to(0.12, { scale: new Vec3(1.15, 1.15, 1) })
-          .to(0.42, { position: new Vec3(center.x, center.y + this.options.tileSize * 0.82, 0), scale: Vec3.ONE.clone() }),
+          .to(0.42, { position: new Vec3(center.x, center.y + this.options.cellHeight * 0.82, 0), scale: Vec3.ONE.clone() }),
         tween(opacity)
           .delay(0.16)
           .to(0.38, { opacity: 0 }),
@@ -135,6 +138,10 @@ export class GridManager {
 
   getItemManager(): ItemManager {
     return this.options.itemManager;
+  }
+
+  getTileSize(): number {
+    return this.options.tileSize;
   }
 
   setCell(
@@ -220,9 +227,10 @@ export class GridManager {
   }
 
   cellToPosition(row: number, col: number): Vec3 {
-    const offset = GameConfig.board.pixelSize / 2 - this.options.tileSize / 2;
-    const x = -offset + col * this.options.tileSize;
-    const y = offset - row * this.options.tileSize;
+    const offsetX = this.options.boardWidth / 2 - this.options.cellWidth / 2;
+    const offsetY = this.options.boardHeight / 2 - this.options.cellHeight / 2;
+    const x = -offsetX + col * this.options.cellWidth;
+    const y = offsetY - row * this.options.cellHeight;
     return new Vec3(x, y, 0);
   }
 
@@ -479,25 +487,27 @@ export class GridManager {
         cell.setPosition(this.cellToPosition(row, col));
 
         const transform = cell.addComponent(UITransform);
-        transform.setContentSize(new Size(this.options.tileSize - 4, this.options.tileSize - 4));
+        const cellWidth = Math.max(this.options.cellWidth - 4, 1);
+        const cellHeight = Math.max(this.options.cellHeight - 4, 1);
+        transform.setContentSize(new Size(cellWidth, cellHeight));
 
         const graphics = cell.addComponent(Graphics);
         graphics.fillColor = new Color(18, 24, 48, 255);
         graphics.strokeColor = new Color(78, 116, 224, 90);
         graphics.lineWidth = 2;
         graphics.roundRect(
-          -(this.options.tileSize - 4) / 2,
-          -(this.options.tileSize - 4) / 2,
-          this.options.tileSize - 4,
-          this.options.tileSize - 4,
+          -cellWidth / 2,
+          -cellHeight / 2,
+          cellWidth,
+          cellHeight,
           14,
         );
         graphics.fill();
         graphics.roundRect(
-          -(this.options.tileSize - 4) / 2,
-          -(this.options.tileSize - 4) / 2,
-          this.options.tileSize - 4,
-          this.options.tileSize - 4,
+          -cellWidth / 2,
+          -cellHeight / 2,
+          cellWidth,
+          cellHeight,
           14,
         );
         graphics.stroke();
@@ -515,16 +525,16 @@ export class GridManager {
     this.selectedFrame.active = false;
 
     const transform = this.selectedFrame.addComponent(UITransform);
-    transform.setContentSize(new Size(this.options.tileSize, this.options.tileSize));
+    transform.setContentSize(new Size(this.options.cellWidth, this.options.cellHeight));
 
     const graphics = this.selectedFrame.addComponent(Graphics);
     graphics.strokeColor = new Color(255, 246, 121, 255);
     graphics.lineWidth = 5;
     graphics.roundRect(
-      -this.options.tileSize / 2,
-      -this.options.tileSize / 2,
-      this.options.tileSize,
-      this.options.tileSize,
+      -this.options.cellWidth / 2,
+      -this.options.cellHeight / 2,
+      this.options.cellWidth,
+      this.options.cellHeight,
       18,
     );
     graphics.stroke();
@@ -536,13 +546,13 @@ export class GridManager {
     node.scale = Vec3.ONE.clone();
 
     const transform = node.addComponent(UITransform);
-    transform.setContentSize(new Size(this.options.tileSize, this.options.tileSize));
+    transform.setContentSize(new Size(this.options.cellWidth, this.options.cellHeight));
 
     const opacity = node.addComponent(UIOpacity);
     opacity.opacity = 230;
 
     const graphics = node.addComponent(Graphics);
-    const length = this.options.tileSize * 0.68;
+    const length = Math.min(this.options.cellWidth, this.options.cellHeight) * 0.68;
     const offset = 9;
     const direction = new Vec3(dx, dy, 0);
     const perpendicular = new Vec3(-dy, dx, 0);
